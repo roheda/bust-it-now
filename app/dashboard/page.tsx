@@ -84,7 +84,7 @@ export default function DashboardPage() {
 
           <article className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm">
             <div className="mb-6 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600">
-              En construcción
+              Integrado
             </div>
             <h2 className="text-2xl font-semibold tracking-tight">Assets</h2>
             <p className="mt-3 text-sm leading-6 text-zinc-600">
@@ -92,32 +92,38 @@ export default function DashboardPage() {
             </p>
           </article>
 
-          <article className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="mb-6 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600">
-              Próximamente
+          <Link
+            href="/dashboard/generador"
+            className="group rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg hover:shadow-zinc-200/70"
+          >
+            <div className="mb-6 inline-flex rounded-full bg-zinc-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white">
+              Activo
             </div>
             <h2 className="text-2xl font-semibold tracking-tight">Generador</h2>
             <p className="mt-3 text-sm leading-6 text-zinc-600">
-              Brief guiado y selección de Nano Banana, GPT Image u otros modelos.
+              Prepara briefs leyendo el Brand Brain y los assets destacados de cada cliente.
             </p>
-          </article>
+            <p className="mt-6 text-sm font-semibold text-zinc-950 transition group-hover:translate-x-1">
+              Abrir módulo →
+            </p>
+          </Link>
         </section>
 
         <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">
-                Siguiente checkpoint: almacenar marcas
+                Siguiente checkpoint: briefs listos para IA
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-                El módulo de Clientes ya permite crear marcas y configurar su Brand Brain. Después agregaremos la biblioteca visual para que cada cliente tenga logos, referencias y assets listos para usarse en las generaciones.
+                El generador ya puede seleccionar un cliente, leer su Brand Brain, recuperar assets destacados y guardar una solicitud de generación estructurada. El siguiente paso será conectar ese brief a Nano Banana, GPT Image u otro motor.
               </p>
             </div>
             <Link
-              href="/dashboard/clientes"
+              href="/dashboard/generador"
               className="inline-flex h-12 items-center justify-center rounded-2xl bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800"
             >
-              Ir a clientes
+              Ir al generador
             </Link>
           </div>
         </section>
