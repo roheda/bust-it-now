@@ -5,8 +5,9 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   getDocs,
-  orderBy,
   query,
   serverTimestamp,
   where,
@@ -78,12 +79,10 @@ export default function ClientAssetsPage() {
 
   async function loadClientName() {
     try {
-      const snapshot = await getDocs(
-        query(collection(db, "clients"), where("__name__", "==", clientId))
-      );
+      const snapshot = await getDoc(doc(db, "clients", clientId));
 
-      if (!snapshot.empty) {
-        const data = snapshot.docs[0].data();
+      if (snapshot.exists()) {
+        const data = snapshot.data();
         setClientName(typeof data.name === "string" ? data.name : "Cliente");
       }
     } catch (err) {
@@ -98,17 +97,16 @@ export default function ClientAssetsPage() {
     try {
       const assetsQuery = query(
         collection(db, "clientAssets"),
-        where("clientId", "==", clientId),
-        orderBy("createdAt", "desc")
+        where("clientId", "==", clientId)
       );
 
       const snapshot = await getDocs(assetsQuery);
 
-      const loadedAssets = snapshot.docs.map((doc) => {
-        const data = doc.data();
+      const loadedAssets = snapshot.docs.map((assetDocument) => {
+        const data = assetDocument.data();
 
         return {
-          id: doc.id,
+          id: assetDocument.id,
           clientId: data.clientId ?? "",
           name: data.name ?? "Asset sin nombre",
           type: data.type ?? "",
