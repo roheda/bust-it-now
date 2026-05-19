@@ -286,7 +286,7 @@ export default function GeneratorPage() {
     setIsSaving(true);
 
     try {
-      await addDoc(collection(db, "generationRequests"), {
+      const requestRef = await addDoc(collection(db, "generationRequests"), {
         clientId: selectedClientId,
         clientName: selectedClient.name,
         clientIndustry: selectedClient.industry,
@@ -314,7 +314,7 @@ export default function GeneratorPage() {
         updatedAt: serverTimestamp(),
       });
 
-      setSuccess("Brief guardado correctamente. Ya está listo para conectarse con el generador de imágenes.");
+      router.push(`/dashboard/generador/${requestRef.id}`);
     } catch (saveError) {
       console.error(saveError);
       setError("No pudimos guardar el brief de generación.");
