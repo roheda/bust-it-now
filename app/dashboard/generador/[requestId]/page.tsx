@@ -27,6 +27,19 @@ type GeneratedImageRecord = {
   imageUrl: string;
   requestedModel: string;
   executedModel: string;
+  generationMode?: string;
+  usedReferenceImageCount?: number;
+  isFinal: boolean;
+};
+
+type SelectedAssetSnapshot = {
+  id?: string;
+  name?: string;
+  type?: string;
+  category?: string;
+  notes?: string;
+  tags?: string[];
+  fileUrl?: string;
 };
 
 type RequestData = BuildPromptInput & {
@@ -37,7 +50,27 @@ type RequestData = BuildPromptInput & {
   selectedModel?: string;
   selectedModelLabel?: string;
   status?: string;
+  selectedAssetsSnapshot?: SelectedAssetSnapshot[];
 };
+
+const variantOptions = [
+  { value: 1, label: "1 imagen" },
+  { value: 2, label: "2 variantes" },
+  { value: 4, label: "4 variantes" },
+];
+
+function isVisualReferenceAsset(asset: SelectedAssetSnapshot) {
+  const fileUrl = asset.fileUrl || "";
+  const lowerUrl = fileUrl.toLowerCase();
+  const isImageUrl =
+    lowerUrl.includes(".png") ||
+    lowerUrl.includes(".jpg") ||
+    lowerUrl.includes(".jpeg") ||
+    lowerUrl.includes(".webp") ||
+    lowerUrl.includes("firebasestorage.googleapis.com");
+
+  return Boolean(fileUrl) && isImageUrl;
+}
 
 export default function GeneratorRequestDetailPage() {
   const params = useParams<{ requestId: string }>();
@@ -47,10 +80,13 @@ export default function GeneratorRequestDetailPage() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [busyImageId, setBusyImageId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [requestData, setRequestData] = useState<RequestData | null>(null);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageRecord[]>([]);
+  const [variantCount, setVariantCount] = useState(1);
+  const [useVisualReferences, setUseVisualReferences] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -109,6 +145,13 @@ export default function GeneratorRequestDetailPage() {
             typeof data.requestedModel === "string" ? data.requestedModel : "",
           executedModel:
             typeof data.executedModel === "string" ? data.executedModel : "",
+          generationMode:
+            typeof data.generationMode === "string" ? data.generationMode : undefined,
+          usedReferenceImageCount:
+            typeof data.usedReferenceImageCount === "number"
+              ? data.usedReferenceImageCount
+              : undefined,
+          isFinal: data.isFinal === true,
         } satisfies GeneratedImageRecord;
       });
 
@@ -122,6 +165,22 @@ export default function GeneratorRequestDetailPage() {
     if (!requestData) return "";
     return buildGenerationPrompt(requestData);
   }, [requestData]);
+
+  const visualReferenceAssets = useMemo(() => {
+    if (!requestData?.selectedAssetsSnapshot?.length) return [];
+    return requestData.selectedAssetsSnapshot.filter(isVisualReferenceAsset);
+  }, [requestData]);
+
+  const referenceImagesPayload = useMemo(() => {
+    if (!useVisualReferences) return [];
+
+    return visualReferenceAssets
+      .filter((asset) => typeof asset.fileUrl === "string" && asset.fileUrl.length > 0)
+      .map((asset) => ({
+        url: asset.fileUrl,
+        name: asset.name,
+      }));
+  }, [useVisualReferences, visualReferenceAssets]);
 
   async function handleGenerateImage() {
     if (!requestData) return;
@@ -145,6 +204,8 @@ export default function GeneratorRequestDetailPage() {
           prompt: promptText,
           format: requestData.format,
           model: requestData.selectedModel || "auto",
+          variantCount,
+          referenceImages: referenceImagesPayload,
         }),
       });
 
@@ -154,39 +215,59 @@ export default function GeneratorRequestDetailPage() {
         throw new Error(result.error || "No pudimos generar la imagen.");
       }
 
-      const storagePath = `generated-images/${
-        requestData.clientId || "unknown-client"
-      }/${requestId}/${Date.now()}.png`;
+      const generatedBase64Images = Array.isArray(result.imagesBase64)
+        ? result.imagesBase64
+        : [];
 
-      const storageRef = ref(storage, storagePath);
+      if (!generatedBase64Images.length) {
+        throw new Error("El proveedor no devolvió imágenes.");
+      }
 
-      await uploadString(storageRef, result.imageBase64, "base64", {
-        contentType: "image/png",
-      });
+      for (const [index, imageBase64] of generatedBase64Images.entries()) {
+        const storagePath = `generated-images/${
+          requestData.clientId || "unknown-client"
+        }/${requestId}/${Date.now()}-${index + 1}.png`;
 
-      const imageUrl = await getDownloadURL(storageRef);
+        const storageRef = ref(storage, storagePath);
 
-      await addDoc(collection(db, "generatedImages"), {
-        requestId,
-        clientId: requestData.clientId || null,
-        clientName: requestData.clientName || "",
-        imageUrl,
-        storagePath,
-        prompt: promptText,
-        requestedModel: requestData.selectedModel || "auto",
-        requestedModelLabel: requestData.selectedModelLabel || "Automático",
-        executedModel: result.executedModel,
-        status: "completed",
-        createdBy: auth.currentUser?.uid ?? null,
-        createdAt: serverTimestamp(),
-      });
+        await uploadString(storageRef, imageBase64, "base64", {
+          contentType: "image/png",
+        });
+
+        const imageUrl = await getDownloadURL(storageRef);
+
+        await addDoc(collection(db, "generatedImages"), {
+          requestId,
+          clientId: requestData.clientId || null,
+          clientName: requestData.clientName || "",
+          imageUrl,
+          storagePath,
+          prompt: promptText,
+          requestedModel: requestData.selectedModel || "auto",
+          requestedModelLabel: requestData.selectedModelLabel || "Automático",
+          executedModel: result.executedModel,
+          generationMode: result.generationMode || "text-only",
+          usedReferenceImageCount:
+            typeof result.usedReferenceImageCount === "number"
+              ? result.usedReferenceImageCount
+              : 0,
+          isFinal: false,
+          status: "completed",
+          createdBy: auth.currentUser?.uid ?? null,
+          createdAt: serverTimestamp(),
+        });
+      }
 
       await updateDoc(doc(db, "generationRequests", requestId), {
         status: "completed",
         updatedAt: serverTimestamp(),
       });
 
-      setSuccess("Imagen generada correctamente.");
+      setSuccess(
+        generatedBase64Images.length === 1
+          ? "Imagen generada correctamente."
+          : `${generatedBase64Images.length} variantes generadas correctamente.`,
+      );
       await loadGeneratedImages();
       await loadRequest();
     } catch (generationError) {
@@ -204,6 +285,36 @@ export default function GeneratorRequestDetailPage() {
       );
     } finally {
       setIsGenerating(false);
+    }
+  }
+
+  async function handleMarkFinal(image: GeneratedImageRecord) {
+    setError("");
+    setSuccess("");
+    setBusyImageId(image.id);
+
+    try {
+      const updates = generatedImages.map((generatedImage) =>
+        updateDoc(doc(db, "generatedImages", generatedImage.id), {
+          isFinal: generatedImage.id === image.id,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+
+      await Promise.all(updates);
+
+      setGeneratedImages((currentImages) =>
+        currentImages.map((currentImage) => ({
+          ...currentImage,
+          isFinal: currentImage.id === image.id,
+        })),
+      );
+      setSuccess("Imagen marcada como final.");
+    } catch (markError) {
+      console.error(markError);
+      setError("No pudimos marcar esta imagen como final.");
+    } finally {
+      setBusyImageId(null);
     }
   }
 
@@ -346,11 +457,87 @@ export default function GeneratorRequestDetailPage() {
                 Acción
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Generar imagen
+                Generar variantes
               </h2>
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                En v1, la generación real se ejecuta con GPT Image aunque el request conserve el modelo solicitado para la arquitectura futura multi-modelo.
+                Ahora puedes sacar 1, 2 o 4 versiones. Si hay assets visuales seleccionados, la generación usará referencias reales de imagen.
               </p>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                {variantOptions.map((option) => {
+                  const selected = variantCount === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setVariantCount(option.value)}
+                      className={`rounded-2xl border px-3 py-3 text-sm font-semibold transition ${
+                        selected
+                          ? "border-zinc-950 bg-zinc-950 text-white"
+                          : "border-zinc-200 bg-zinc-50 text-zinc-800 hover:bg-white"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-900">
+                      Usar referencias visuales reales
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-zinc-600">
+                      {visualReferenceAssets.length > 0
+                        ? `${visualReferenceAssets.length} asset(s) de imagen disponibles para apoyar la generación.`
+                        : "Este request no tiene assets de imagen listos para usar como referencia."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUseVisualReferences((currentValue) => !currentValue)}
+                    disabled={visualReferenceAssets.length === 0}
+                    className={`h-10 min-w-24 rounded-full px-4 text-sm font-semibold transition ${
+                      useVisualReferences && visualReferenceAssets.length > 0
+                        ? "bg-zinc-950 text-white"
+                        : "bg-zinc-200 text-zinc-600"
+                    } disabled:cursor-not-allowed disabled:opacity-70`}
+                  >
+                    {useVisualReferences && visualReferenceAssets.length > 0 ? "Activo" : "Inactivo"}
+                  </button>
+                </div>
+              </div>
+
+              {visualReferenceAssets.length > 0 ? (
+                <div className="mt-5 grid gap-3">
+                  {visualReferenceAssets.map((asset, index) => (
+                    <div
+                      key={`${asset.fileUrl || "reference"}-${index}`}
+                      className="rounded-3xl border border-zinc-200 bg-white p-3"
+                    >
+                      <div className="grid grid-cols-[72px_1fr] items-center gap-3">
+                        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
+                          <img
+                            src={asset.fileUrl}
+                            alt={asset.name || "Asset de referencia"}
+                            className="h-16 w-full object-contain p-2"
+                          />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-zinc-900">
+                            {asset.name || "Referencia visual"}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {asset.type || "asset"} {asset.category ? `· ${asset.category}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
               {error ? (
                 <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -370,7 +557,11 @@ export default function GeneratorRequestDetailPage() {
                 disabled={isGenerating}
                 className="mt-6 flex h-14 w-full items-center justify-center rounded-3xl bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isGenerating ? "Generando..." : "Generar imagen"}
+                {isGenerating
+                  ? "Generando..."
+                  : variantCount === 1
+                    ? "Generar imagen"
+                    : `Generar ${variantCount} variantes`}
               </button>
             </section>
 
@@ -393,28 +584,50 @@ export default function GeneratorRequestDetailPage() {
                       key={image.id}
                       className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4"
                     >
-                      <img
-                        src={image.imageUrl}
-                        alt="Imagen generada"
-                        className="w-full rounded-2xl border border-zinc-200"
-                      />
-                      <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+                        {image.isFinal ? (
+                          <span className="absolute left-3 top-3 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">
+                            Final
+                          </span>
+                        ) : null}
+                        <img
+                          src={image.imageUrl}
+                          alt="Imagen generada"
+                          className="w-full"
+                        />
+                      </div>
+                      <div className="mt-3 space-y-3">
                         <div>
                           <p className="text-sm font-semibold text-zinc-900">
                             Generada
                           </p>
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs leading-5 text-zinc-500">
                             Ejecutado con: {image.executedModel}
+                            <br />
+                            Modo: {image.generationMode || "text-only"}
+                            {typeof image.usedReferenceImageCount === "number"
+                              ? ` · Referencias usadas: ${image.usedReferenceImageCount}`
+                              : ""}
                           </p>
                         </div>
-                        <a
-                          href={image.imageUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800"
-                        >
-                          Ver archivo
-                        </a>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <a
+                            href={image.imageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800"
+                          >
+                            Ver archivo
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => handleMarkFinal(image)}
+                            disabled={busyImageId === image.id || image.isFinal}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {image.isFinal ? "Marcada final" : "Usar como final"}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
