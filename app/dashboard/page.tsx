@@ -49,7 +49,7 @@ export default function DashboardPage() {
               BUST IT NOW
             </p>
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Dashboard inicial
+              Dashboard
             </h1>
             <p className="mt-3 text-sm leading-6 text-zinc-300">
               Sesión activa: {user?.email ?? "usuario sin correo"}
@@ -66,56 +66,58 @@ export default function DashboardPage() {
         </header>
 
         <section className="grid gap-5 md:grid-cols-3">
-          {[
-            {
-              title: "Clientes",
-              description:
-                "Alta y administración de marcas que usarán la plataforma.",
-              status: "Siguiente módulo",
-            },
-            {
-              title: "Brand Brain",
-              description:
-                "Memoria visual: logos, colores, referencias y reglas por cliente.",
-              status: "Siguiente módulo",
-            },
-            {
-              title: "Generador",
-              description:
-                "Brief guiado y selección de modelo de IA para crear piezas.",
-              status: "Próximamente",
-            },
-          ].map((card) => (
-            <article
-              key={card.title}
-              className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm"
-            >
-              <div className="mb-6 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600">
-                {card.status}
-              </div>
-              <h2 className="text-2xl font-semibold tracking-tight">{card.title}</h2>
-              <p className="mt-3 text-sm leading-6 text-zinc-600">
-                {card.description}
-              </p>
-            </article>
-          ))}
+          <Link
+            href="/dashboard/clientes"
+            className="group rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg hover:shadow-zinc-200/70"
+          >
+            <div className="mb-6 inline-flex rounded-full bg-zinc-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white">
+              Activo
+            </div>
+            <h2 className="text-2xl font-semibold tracking-tight">Clientes</h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-600">
+              Crea marcas y entra al Brand Brain de cada una.
+            </p>
+            <p className="mt-6 text-sm font-semibold text-zinc-950 transition group-hover:translate-x-1">
+              Abrir módulo →
+            </p>
+          </Link>
+
+          <article className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="mb-6 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600">
+              En construcción
+            </div>
+            <h2 className="text-2xl font-semibold tracking-tight">Assets</h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-600">
+              Logos, referencias permanentes, fotos de producto y stock por cliente.
+            </p>
+          </article>
+
+          <article className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="mb-6 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600">
+              Próximamente
+            </div>
+            <h2 className="text-2xl font-semibold tracking-tight">Generador</h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-600">
+              Brief guiado y selección de Nano Banana, GPT Image u otros modelos.
+            </p>
+          </article>
         </section>
 
         <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">
-                Primer checkpoint completado
+                Siguiente checkpoint: almacenar marcas
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-                Ya tenemos la base de acceso del sistema. El siguiente bloque será construir el panel de clientes y el Brand Brain para empezar a guardar la memoria visual de cada marca.
+                El módulo de Clientes ya permite crear marcas y configurar su Brand Brain. Después agregaremos la biblioteca visual para que cada cliente tenga logos, referencias y assets listos para usarse en las generaciones.
               </p>
             </div>
             <Link
-              href="/login"
+              href="/dashboard/clientes"
               className="inline-flex h-12 items-center justify-center rounded-2xl bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800"
             >
-              Ver acceso
+              Ir a clientes
             </Link>
           </div>
         </section>
