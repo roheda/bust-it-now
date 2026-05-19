@@ -241,11 +241,19 @@ export default function ClientBrandBrainPage() {
               </p>
             </div>
 
-            <div className="min-w-48 rounded-3xl border border-white/10 bg-white/10 p-4">
-              <p className="text-sm font-medium text-zinc-300">Completitud inicial</p>
-              <p className="mt-1 text-4xl font-semibold tracking-tight text-white">
-                {completeness}%
-              </p>
+            <div className="flex flex-col gap-3 lg:items-end">
+              <div className="min-w-48 rounded-3xl border border-white/10 bg-white/10 p-4">
+                <p className="text-sm font-medium text-zinc-300">Completitud inicial</p>
+                <p className="mt-1 text-4xl font-semibold tracking-tight text-white">
+                  {completeness}%
+                </p>
+              </div>
+              <Link
+                href={`/dashboard/clientes/${clientId}/assets`}
+                className="inline-flex h-12 items-center justify-center rounded-2xl border border-white/15 bg-white px-5 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100"
+              >
+                Abrir Assets
+              </Link>
             </div>
           </div>
         </header>
