@@ -9,12 +9,14 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, storage } from "@/lib/firebase";
 
 type ClientRecord = {
   id: string;
@@ -44,6 +46,15 @@ type AssetRecord = {
   storagePath?: string;
   mimeType?: string;
   isFeatured: boolean;
+};
+
+type RequestAttachmentRecord = {
+  name: string;
+  role: string;
+  notes: string;
+  fileUrl: string;
+  storagePath: string;
+  mimeType: string;
 };
 
 type GenerationRequestSummary = {
@@ -116,6 +127,14 @@ const supportedModels = [
   { id: "flux", label: "Flux" },
 ];
 
+const requestAttachmentRoles = [
+  { id: "producto-principal", label: "Producto principal" },
+  { id: "platillo-principal", label: "Platillo principal" },
+  { id: "referencia-visual", label: "Referencia visual" },
+  { id: "fondo-ambiente", label: "Fondo / ambiente" },
+  { id: "promocion", label: "Promoción" },
+];
+
 function mapModelLabel(modelId: string) {
   return supportedModels.find((model) => model.id === modelId)?.label ?? modelId;
 }
@@ -128,6 +147,8 @@ function formatStatus(status: string) {
       return "Generando";
     case "error":
       return "Error";
+    case "saving_assets":
+      return "Guardando";
     case "brief_ready":
     default:
       return "Brief listo";
@@ -149,6 +170,15 @@ function toggleArrayValue(value: string, currentValues: string[]) {
   return currentValues.includes(value)
     ? currentValues.filter((currentValue) => currentValue !== value)
     : [...currentValues, value];
+}
+
+function safeFileName(fileName: string) {
+  return fileName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "request-attachment";
 }
 
 export default function GeneratorPage() {
@@ -182,6 +212,12 @@ export default function GeneratorPage() {
   const [selectedModel, setSelectedModel] = useState("auto");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
+  const [requestImageFile, setRequestImageFile] = useState<File | null>(null);
+  const [requestImagePreview, setRequestImagePreview] = useState("");
+  const [requestImageName, setRequestImageName] = useState("");
+  const [requestImageRole, setRequestImageRole] = useState("producto-principal");
+  const [requestImageNotes, setRequestImageNotes] = useState("");
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
@@ -196,6 +232,14 @@ export default function GeneratorPage() {
 
     return () => unsubscribe();
   }, [router]);
+
+  useEffect(() => {
+    return () => {
+      if (requestImagePreview) {
+        URL.revokeObjectURL(requestImagePreview);
+      }
+    };
+  }, [requestImagePreview]);
 
   async function loadClients() {
     setIsLoadingClients(true);
@@ -321,6 +365,46 @@ export default function GeneratorPage() {
     }
   }
 
+  function handleRequestImageChange(file: File | null) {
+    setRequestImageFile(file);
+
+    if (requestImagePreview) {
+      URL.revokeObjectURL(requestImagePreview);
+    }
+
+    if (!file) {
+      setRequestImagePreview("");
+      setRequestImageName("");
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setError("La referencia puntual debe ser una imagen PNG, JPG o WEBP.");
+      setRequestImageFile(null);
+      setRequestImagePreview("");
+      return;
+    }
+
+    setError("");
+    setRequestImagePreview(URL.createObjectURL(file));
+
+    if (!requestImageName.trim()) {
+      setRequestImageName(file.name);
+    }
+  }
+
+  function clearRequestImage() {
+    if (requestImagePreview) {
+      URL.revokeObjectURL(requestImagePreview);
+    }
+
+    setRequestImageFile(null);
+    setRequestImagePreview("");
+    setRequestImageName("");
+    setRequestImageRole("producto-principal");
+    setRequestImageNotes("");
+  }
+
   async function handleSaveBrief(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -364,16 +448,47 @@ export default function GeneratorPage() {
         brandBrainSnapshot: brandBrain ?? {},
         selectedAssetIds,
         selectedAssetsSnapshot,
-        status: "brief_ready",
+        requestAttachments: [],
+        status: requestImageFile ? "saving_assets" : "brief_ready",
         createdBy: user?.uid ?? null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
+      const requestAttachments: RequestAttachmentRecord[] = [];
+
+      if (requestImageFile) {
+        const storagePath = `generation-attachments/${selectedClientId}/${requestRef.id}/${Date.now()}-${safeFileName(requestImageFile.name)}`;
+        const storageRef = ref(storage, storagePath);
+
+        await uploadBytes(storageRef, requestImageFile, {
+          contentType: requestImageFile.type,
+        });
+
+        const fileUrl = await getDownloadURL(storageRef);
+
+        requestAttachments.push({
+          name: requestImageName.trim() || requestImageFile.name,
+          role: requestImageRole,
+          notes: requestImageNotes.trim(),
+          fileUrl,
+          storagePath,
+          mimeType: requestImageFile.type,
+        });
+      }
+
+      if (requestImageFile) {
+        await updateDoc(requestRef, {
+          requestAttachments,
+          status: "brief_ready",
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       router.push(`/dashboard/generador/${requestRef.id}`);
     } catch (saveError) {
       console.error(saveError);
-      setError("No pudimos guardar el brief de generación.");
+      setError("No pudimos guardar el brief de generación ni la referencia puntual.");
     } finally {
       setIsSaving(false);
     }
@@ -408,7 +523,7 @@ export default function GeneratorPage() {
             Generador de piezas
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
-            Selecciona una marca, carga su Brand Brain, elige los assets que sí deben viajar al request y prepara el brief visual.
+            Selecciona una marca, carga su Brand Brain, elige los assets que sí deben viajar al request y suma una referencia puntual para la pieza cuando haga falta.
           </p>
         </header>
 
@@ -526,8 +641,73 @@ export default function GeneratorPage() {
               </div>
             </div>
 
+            <section className="space-y-5 border-t border-zinc-200 pt-6">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">4. Referencia específica de esta pieza</p>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  Sube aquí un producto, platillo o imagen puntual que deba considerarse solo para este brief. Viaja como referencia prioritaria al generador.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-zinc-800" htmlFor="request-image">
+                  Imagen puntual
+                </label>
+                <input
+                  id="request-image"
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  onChange={(event) => handleRequestImageChange(event.target.files?.[0] || null)}
+                  className="block w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-800 file:mr-4 file:rounded-xl file:border-0 file:bg-zinc-950 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-zinc-800"
+                />
+              </div>
+
+              {requestImagePreview ? (
+                <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white p-2">
+                      <img
+                        src={requestImagePreview}
+                        alt="Vista previa de referencia puntual"
+                        className="max-h-52 max-w-full rounded-xl object-contain"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearRequestImage}
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
+                    >
+                      Quitar imagen
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-5 md:grid-cols-2">
+                <InputField
+                  label="Nombre del archivo"
+                  value={requestImageName}
+                  onChange={setRequestImageName}
+                  placeholder="Ej. Hamburguesa doble"
+                />
+                <SelectField
+                  label="Rol de la imagen"
+                  value={requestImageRole}
+                  onChange={setRequestImageRole}
+                  options={requestAttachmentRoles}
+                />
+              </div>
+
+              <TextAreaField
+                label="Instrucción sobre este archivo"
+                value={requestImageNotes}
+                onChange={setRequestImageNotes}
+                placeholder="Ej. usar este producto como protagonista, respetar su forma y hacerlo el elemento principal del diseño."
+              />
+            </section>
+
             <div className="space-y-5 border-t border-zinc-200 pt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">4. Dirección visual</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">5. Dirección visual</p>
               <ChipSelector label="Qué debe transmitir" values={emotions} selectedValues={selectedEmotions} onToggle={(value) => setSelectedEmotions(toggleArrayValue(value, selectedEmotions))} />
               <ChipSelector label="Elementos que deben aparecer" values={visualElements} selectedValues={selectedVisualElements} onToggle={(value) => setSelectedVisualElements(toggleArrayValue(value, selectedVisualElements))} />
               <TextAreaField
@@ -617,6 +797,7 @@ export default function GeneratorPage() {
                 <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
                   <p><span className="font-semibold text-zinc-950">{selectedAssetIds.length}</span> asset(s) seleccionados.</p>
                   <p><span className="font-semibold text-zinc-950">{selectedImageAssetsCount}</span> asset(s) de imagen podrán usarse como referencias visuales reales.</p>
+                  <p><span className="font-semibold text-zinc-950">{requestImageFile ? 1 : 0}</span> referencia puntual será priorizada en este request.</p>
                 </div>
               ) : null}
             </section>
