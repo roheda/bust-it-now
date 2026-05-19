@@ -40,6 +40,17 @@ type SelectedAssetSnapshot = {
   notes?: string;
   tags?: string[];
   fileUrl?: string;
+  storagePath?: string;
+  mimeType?: string;
+};
+
+type RequestAttachment = {
+  name?: string;
+  role?: string;
+  notes?: string;
+  fileUrl?: string;
+  storagePath?: string;
+  mimeType?: string;
 };
 
 type RequestData = BuildPromptInput & {
@@ -51,6 +62,7 @@ type RequestData = BuildPromptInput & {
   selectedModelLabel?: string;
   status?: string;
   selectedAssetsSnapshot?: SelectedAssetSnapshot[];
+  requestAttachments?: RequestAttachment[];
 };
 
 const variantOptions = [
@@ -59,17 +71,28 @@ const variantOptions = [
   { value: 4, label: "4 variantes" },
 ];
 
-function isVisualReferenceAsset(asset: SelectedAssetSnapshot) {
-  const fileUrl = asset.fileUrl || "";
-  const lowerUrl = fileUrl.toLowerCase();
-  const isImageUrl =
-    lowerUrl.includes(".png") ||
-    lowerUrl.includes(".jpg") ||
-    lowerUrl.includes(".jpeg") ||
-    lowerUrl.includes(".webp") ||
-    lowerUrl.includes("firebasestorage.googleapis.com");
+function isImageReference(item: { fileUrl?: string; storagePath?: string; mimeType?: string }) {
+  const mimeType = item.mimeType || "";
+  const path = `${item.fileUrl || ""} ${item.storagePath || ""}`.toLowerCase();
 
-  return Boolean(fileUrl) && isImageUrl;
+  return (
+    Boolean(item.fileUrl) &&
+    (mimeType.startsWith("image/") ||
+      /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(path) ||
+      path.includes("firebasestorage.googleapis.com"))
+  );
+}
+
+function attachmentRoleLabel(role?: string) {
+  const map: Record<string, string> = {
+    "producto-principal": "Producto principal",
+    "platillo-principal": "Platillo principal",
+    "referencia-visual": "Referencia visual",
+    "fondo-ambiente": "Fondo / ambiente",
+    promocion: "Promoción",
+  };
+
+  return map[role || ""] || role || "Referencia puntual";
 }
 
 export default function GeneratorRequestDetailPage() {
@@ -166,21 +189,37 @@ export default function GeneratorRequestDetailPage() {
     return buildGenerationPrompt(requestData);
   }, [requestData]);
 
+  const requestAttachmentReferences = useMemo(() => {
+    if (!requestData?.requestAttachments?.length) return [];
+
+    return requestData.requestAttachments
+      .filter(isImageReference)
+      .map((attachment) => ({
+        url: attachment.fileUrl || "",
+        name: attachment.name || attachment.role || "Adjunto puntual",
+      }))
+      .filter((attachment) => attachment.url.length > 0);
+  }, [requestData]);
+
   const visualReferenceAssets = useMemo(() => {
     if (!requestData?.selectedAssetsSnapshot?.length) return [];
-    return requestData.selectedAssetsSnapshot.filter(isVisualReferenceAsset);
+    return requestData.selectedAssetsSnapshot.filter(isImageReference);
   }, [requestData]);
 
   const referenceImagesPayload = useMemo(() => {
     if (!useVisualReferences) return [];
 
-    return visualReferenceAssets
+    const assetReferences = visualReferenceAssets
       .filter((asset) => typeof asset.fileUrl === "string" && asset.fileUrl.length > 0)
       .map((asset) => ({
-        url: asset.fileUrl,
+        url: asset.fileUrl || "",
         name: asset.name,
       }));
-  }, [useVisualReferences, visualReferenceAssets]);
+
+    return [...requestAttachmentReferences, ...assetReferences];
+  }, [requestAttachmentReferences, useVisualReferences, visualReferenceAssets]);
+
+  const availableReferenceCount = requestAttachmentReferences.length + visualReferenceAssets.length;
 
   async function handleGenerateImage() {
     if (!requestData) return;
@@ -372,50 +411,28 @@ export default function GeneratorRequestDetailPage() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-2xl bg-zinc-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                  Objetivo
-                </p>
-                <p className="mt-2 text-base font-medium text-zinc-900">
-                  {requestData.goal || "-"}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Objetivo</p>
+                <p className="mt-2 text-base font-medium text-zinc-900">{requestData.goal || "-"}</p>
               </div>
-
               <div className="rounded-2xl bg-zinc-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                  Formato
-                </p>
-                <p className="mt-2 text-base font-medium text-zinc-900">
-                  {requestData.format || "-"}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Formato</p>
+                <p className="mt-2 text-base font-medium text-zinc-900">{requestData.format || "-"}</p>
               </div>
-
               <div className="rounded-2xl bg-zinc-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                  Tipo
-                </p>
-                <p className="mt-2 text-base font-medium text-zinc-900">
-                  {requestData.contentType || "-"}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Tipo</p>
+                <p className="mt-2 text-base font-medium text-zinc-900">{requestData.contentType || "-"}</p>
               </div>
-
               <div className="rounded-2xl bg-zinc-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-                  Modelo solicitado
-                </p>
-                <p className="mt-2 text-base font-medium text-zinc-900">
-                  {requestData.selectedModelLabel || requestData.selectedModel || "-"}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Modelo solicitado</p>
+                <p className="mt-2 text-base font-medium text-zinc-900">{requestData.selectedModelLabel || requestData.selectedModel || "-"}</p>
               </div>
             </div>
 
             <div className="space-y-4 rounded-3xl border border-zinc-200 bg-zinc-50 p-5">
               <div>
                 <p className="text-sm font-semibold text-zinc-900">Mensaje principal</p>
-                <p className="mt-1 text-sm leading-6 text-zinc-600">
-                  {requestData.mainMessage || "-"}
-                </p>
+                <p className="mt-1 text-sm leading-6 text-zinc-600">{requestData.mainMessage || "-"}</p>
               </div>
-
               <div>
                 <p className="text-sm font-semibold text-zinc-900">Copy</p>
                 <p className="mt-1 text-sm leading-6 text-zinc-600">
@@ -428,7 +445,6 @@ export default function GeneratorRequestDetailPage() {
                   CTA: {requestData.copy?.cta || "-"}
                 </p>
               </div>
-
               <div>
                 <p className="text-sm font-semibold text-zinc-900">Dirección visual</p>
                 <p className="mt-1 text-sm leading-6 text-zinc-600">
@@ -440,9 +456,7 @@ export default function GeneratorRequestDetailPage() {
             </div>
 
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Prompt final
-              </p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Prompt final</p>
               <textarea
                 value={promptText}
                 readOnly
@@ -453,14 +467,10 @@ export default function GeneratorRequestDetailPage() {
 
           <aside className="space-y-6">
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Acción
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Generar variantes
-              </h2>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Acción</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Generar variantes</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                Ahora puedes sacar 1, 2 o 4 versiones. Si hay assets visuales seleccionados, la generación usará referencias reales de imagen.
+                Puedes sacar 1, 2 o 4 versiones. Si hay referencias visuales seleccionadas, la generación las usará; las adjuntas a este brief viajan primero.
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -483,29 +493,63 @@ export default function GeneratorRequestDetailPage() {
                 })}
               </div>
 
+              {requestData.requestAttachments?.length ? (
+                <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                  <p className="text-sm font-semibold text-zinc-900">Referencia específica del brief</p>
+                  <p className="mt-1 text-sm leading-6 text-zinc-600">
+                    Esta referencia tiene prioridad sobre los assets generales del cliente.
+                  </p>
+                  <div className="mt-3 grid gap-3">
+                    {requestData.requestAttachments.map((attachment, index) => (
+                      <div
+                        key={`${attachment.fileUrl || "attachment"}-${index}`}
+                        className="rounded-2xl border border-zinc-200 bg-white p-3"
+                      >
+                        <div className="grid grid-cols-[72px_1fr] items-center gap-3">
+                          <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
+                            {attachment.fileUrl ? (
+                              <img
+                                src={attachment.fileUrl}
+                                alt={attachment.name || "Adjunto puntual"}
+                                className="h-16 w-full object-contain p-2"
+                              />
+                            ) : null}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-zinc-900">{attachment.name || "Adjunto puntual"}</p>
+                            <p className="mt-1 text-xs text-zinc-500">{attachmentRoleLabel(attachment.role)}</p>
+                            {attachment.notes ? (
+                              <p className="mt-1 text-xs leading-5 text-zinc-500">{attachment.notes}</p>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-zinc-900">
-                      Usar referencias visuales reales
-                    </p>
+                    <p className="text-sm font-semibold text-zinc-900">Usar referencias visuales reales</p>
                     <p className="mt-1 text-sm leading-6 text-zinc-600">
-                      {visualReferenceAssets.length > 0
-                        ? `${visualReferenceAssets.length} asset(s) de imagen disponibles para apoyar la generación.`
-                        : "Este request no tiene assets de imagen listos para usar como referencia."}
+                      {availableReferenceCount > 0
+                        ? `${availableReferenceCount} referencia(s) de imagen disponibles para apoyar la generación.`
+                        : "Este request no tiene imágenes listas para usar como referencia."}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setUseVisualReferences((currentValue) => !currentValue)}
-                    disabled={visualReferenceAssets.length === 0}
+                    disabled={availableReferenceCount === 0}
                     className={`h-10 min-w-24 rounded-full px-4 text-sm font-semibold transition ${
-                      useVisualReferences && visualReferenceAssets.length > 0
+                      useVisualReferences && availableReferenceCount > 0
                         ? "bg-zinc-950 text-white"
                         : "bg-zinc-200 text-zinc-600"
                     } disabled:cursor-not-allowed disabled:opacity-70`}
                   >
-                    {useVisualReferences && visualReferenceAssets.length > 0 ? "Activo" : "Inactivo"}
+                    {useVisualReferences && availableReferenceCount > 0 ? "Activo" : "Inactivo"}
                   </button>
                 </div>
               </div>
@@ -513,25 +557,14 @@ export default function GeneratorRequestDetailPage() {
               {visualReferenceAssets.length > 0 ? (
                 <div className="mt-5 grid gap-3">
                   {visualReferenceAssets.map((asset, index) => (
-                    <div
-                      key={`${asset.fileUrl || "reference"}-${index}`}
-                      className="rounded-3xl border border-zinc-200 bg-white p-3"
-                    >
+                    <div key={`${asset.fileUrl || "reference"}-${index}`} className="rounded-3xl border border-zinc-200 bg-white p-3">
                       <div className="grid grid-cols-[72px_1fr] items-center gap-3">
                         <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
-                          <img
-                            src={asset.fileUrl}
-                            alt={asset.name || "Asset de referencia"}
-                            className="h-16 w-full object-contain p-2"
-                          />
+                          <img src={asset.fileUrl} alt={asset.name || "Asset de referencia"} className="h-16 w-full object-contain p-2" />
                         </div>
                         <div>
-                          <p className="text-sm font-semibold text-zinc-900">
-                            {asset.name || "Referencia visual"}
-                          </p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            {asset.type || "asset"} {asset.category ? `· ${asset.category}` : ""}
-                          </p>
+                          <p className="text-sm font-semibold text-zinc-900">{asset.name || "Referencia visual"}</p>
+                          <p className="mt-1 text-xs text-zinc-500">{asset.type || "asset"} {asset.category ? `· ${asset.category}` : ""}</p>
                         </div>
                       </div>
                     </div>
@@ -539,17 +572,8 @@ export default function GeneratorRequestDetailPage() {
                 </div>
               ) : null}
 
-              {error ? (
-                <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
-                </div>
-              ) : null}
-
-              {success ? (
-                <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                  {success}
-                </div>
-              ) : null}
+              {error ? <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+              {success ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div> : null}
 
               <button
                 type="button"
@@ -557,68 +581,38 @@ export default function GeneratorRequestDetailPage() {
                 disabled={isGenerating}
                 className="mt-6 flex h-14 w-full items-center justify-center rounded-3xl bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isGenerating
-                  ? "Generando..."
-                  : variantCount === 1
-                    ? "Generar imagen"
-                    : `Generar ${variantCount} variantes`}
+                {isGenerating ? "Generando..." : variantCount === 1 ? "Generar imagen" : `Generar ${variantCount} variantes`}
               </button>
             </section>
 
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Resultados
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Imágenes generadas
-              </h2>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Resultados</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Imágenes generadas</h2>
 
               {generatedImages.length === 0 ? (
-                <p className="mt-4 text-sm leading-6 text-zinc-600">
-                  Aún no hay imágenes generadas para este request.
-                </p>
+                <p className="mt-4 text-sm leading-6 text-zinc-600">Aún no hay imágenes generadas para este request.</p>
               ) : (
                 <div className="mt-5 grid gap-4">
                   {generatedImages.map((image) => (
-                    <div
-                      key={image.id}
-                      className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4"
-                    >
+                    <div key={image.id} className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
                       <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white">
                         {image.isFinal ? (
-                          <span className="absolute left-3 top-3 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">
-                            Final
-                          </span>
+                          <span className="absolute left-3 top-3 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Final</span>
                         ) : null}
-                        <img
-                          src={image.imageUrl}
-                          alt="Imagen generada"
-                          className="w-full"
-                        />
+                        <img src={image.imageUrl} alt="Imagen generada" className="w-full" />
                       </div>
                       <div className="mt-3 space-y-3">
                         <div>
-                          <p className="text-sm font-semibold text-zinc-900">
-                            Generada
-                          </p>
+                          <p className="text-sm font-semibold text-zinc-900">Generada</p>
                           <p className="text-xs leading-5 text-zinc-500">
                             Ejecutado con: {image.executedModel}
                             <br />
                             Modo: {image.generationMode || "text-only"}
-                            {typeof image.usedReferenceImageCount === "number"
-                              ? ` · Referencias usadas: ${image.usedReferenceImageCount}`
-                              : ""}
+                            {typeof image.usedReferenceImageCount === "number" ? ` · Referencias usadas: ${image.usedReferenceImageCount}` : ""}
                           </p>
                         </div>
                         <div className="flex flex-col gap-2 sm:flex-row">
-                          <a
-                            href={image.imageUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800"
-                          >
-                            Ver archivo
-                          </a>
+                          <a href={image.imageUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800">Ver archivo</a>
                           <button
                             type="button"
                             onClick={() => handleMarkFinal(image)}
