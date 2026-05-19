@@ -4,7 +4,6 @@ import {
   addDoc,
   collection,
   getDocs,
-  orderBy,
   query,
   serverTimestamp,
 } from "firebase/firestore";
@@ -53,7 +52,7 @@ export default function ClientsPage() {
     setError("");
 
     try {
-      const clientsQuery = query(collection(db, "clients"), orderBy("createdAt", "desc"));
+      const clientsQuery = query(collection(db, "clients"));
       const snapshot = await getDocs(clientsQuery);
       const loadedClients = snapshot.docs.map((document) => {
         const data = document.data();
@@ -66,6 +65,7 @@ export default function ClientsPage() {
         } satisfies ClientRecord;
       });
 
+      loadedClients.sort((a, b) => a.name.localeCompare(b.name, "es"));
       setClients(loadedClients);
     } catch (loadError) {
       console.error(loadError);
@@ -112,15 +112,18 @@ export default function ClientsPage() {
         updatedAt: serverTimestamp(),
       });
 
-      setClients((currentClients) => [
-        {
-          id: clientRef.id,
-          name: cleanName,
-          industry: cleanIndustry,
-          status: "active",
-        },
-        ...currentClients,
-      ]);
+      const newClient = {
+        id: clientRef.id,
+        name: cleanName,
+        industry: cleanIndustry,
+        status: "active",
+      } satisfies ClientRecord;
+
+      setClients((currentClients) =>
+        [...currentClients, newClient].sort((a, b) =>
+          a.name.localeCompare(b.name, "es"),
+        ),
+      );
       setName("");
       setIndustry("");
       setSuccess("Cliente creado. Ya puedes configurar su Brand Brain.");
