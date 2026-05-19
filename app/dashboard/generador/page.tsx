@@ -44,6 +44,15 @@ type AssetRecord = {
   isFeatured: boolean;
 };
 
+type GenerationRequestSummary = {
+  id: string;
+  clientName: string;
+  mainMessage: string;
+  status: string;
+  format: string;
+  contentType: string;
+};
+
 const formats = [
   { id: "instagram-post", label: "Post Instagram 4:5" },
   { id: "instagram-story", label: "Story 9:16" },
@@ -109,17 +118,33 @@ function mapModelLabel(modelId: string) {
   return supportedModels.find((model) => model.id === modelId)?.label ?? modelId;
 }
 
+function formatStatus(status: string) {
+  switch (status) {
+    case "completed":
+      return "Generado";
+    case "generating":
+      return "Generando";
+    case "error":
+      return "Error";
+    case "brief_ready":
+    default:
+      return "Brief listo";
+  }
+}
+
 export default function GeneratorPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
   const [isLoadingContext, setIsLoadingContext] = useState(false);
+  const [isLoadingRecentRequests, setIsLoadingRecentRequests] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [recentRequests, setRecentRequests] = useState<GenerationRequestSummary[]>([]);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
   const [brandBrain, setBrandBrain] = useState<BrandBrain | null>(null);
@@ -148,7 +173,7 @@ export default function GeneratorPage() {
 
       setUser(currentUser);
       setIsCheckingSession(false);
-      await loadClients();
+      await Promise.all([loadClients(), loadRecentRequests()]);
     });
 
     return () => unsubscribe();
@@ -176,6 +201,32 @@ export default function GeneratorPage() {
       setError("No pudimos cargar clientes para el generador.");
     } finally {
       setIsLoadingClients(false);
+    }
+  }
+
+  async function loadRecentRequests() {
+    setIsLoadingRecentRequests(true);
+
+    try {
+      const snapshot = await getDocs(query(collection(db, "generationRequests")));
+      const loadedRequests = snapshot.docs.map((requestDocument) => {
+        const data = requestDocument.data();
+
+        return {
+          id: requestDocument.id,
+          clientName: typeof data.clientName === "string" ? data.clientName : "Cliente",
+          mainMessage: typeof data.mainMessage === "string" ? data.mainMessage : "Sin mensaje",
+          status: typeof data.status === "string" ? data.status : "brief_ready",
+          format: typeof data.format === "string" ? data.format : "",
+          contentType: typeof data.contentType === "string" ? data.contentType : "",
+        } satisfies GenerationRequestSummary;
+      });
+
+      setRecentRequests(loadedRequests.slice(-8).reverse());
+    } catch (loadError) {
+      console.error(loadError);
+    } finally {
+      setIsLoadingRecentRequests(false);
     }
   }
 
@@ -353,9 +404,67 @@ export default function GeneratorPage() {
             Generador de piezas
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
-            Selecciona una marca, deja que el sistema lea su Brand Brain y prepara el brief visual que luego enviaremos a Nano Banana, GPT Image u otro modelo.
+            Selecciona una marca, deja que el sistema lea su Brand Brain y prepara el brief visual que luego enviaremos al motor de imagen.
           </p>
         </header>
+
+        <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                Historial
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+                Briefs recientes
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={loadRecentRequests}
+              className="inline-flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50"
+            >
+              Actualizar historial
+            </button>
+          </div>
+
+          {isLoadingRecentRequests ? (
+            <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-5 text-sm text-zinc-600">
+              Cargando briefs recientes...
+            </div>
+          ) : recentRequests.length === 0 ? (
+            <div className="mt-5 rounded-3xl border border-dashed border-zinc-300 bg-zinc-50 px-5 py-8 text-center text-sm text-zinc-600">
+              Todavía no hay briefs guardados.
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {recentRequests.map((request) => (
+                <Link
+                  key={request.id}
+                  href={`/dashboard/generador/${request.id}`}
+                  className="group rounded-3xl border border-zinc-200 bg-zinc-50 p-4 transition hover:-translate-y-0.5 hover:border-zinc-300 hover:bg-white hover:shadow-lg hover:shadow-zinc-200/60"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-950">{request.clientName}</p>
+                      <p className="mt-1 line-clamp-3 text-xs leading-5 text-zinc-600">
+                        {request.mainMessage}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-zinc-950 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white">
+                      {formatStatus(request.status)}
+                    </span>
+                  </div>
+                  <p className="mt-4 text-xs font-medium text-zinc-500">
+                    {request.format || "Formato"} · {request.contentType || "Contenido"}
+                  </p>
+                  <p className="mt-3 text-sm font-semibold text-zinc-950 transition group-hover:translate-x-1">
+                    Abrir →
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
 
         <form className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]" onSubmit={handleSaveBrief}>
           <section className="space-y-6 rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
