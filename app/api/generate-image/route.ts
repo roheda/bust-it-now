@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 
+export const maxDuration = 300;
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -54,6 +56,31 @@ function sanitizeFileName(name: string, index: number, mimeType: string) {
   return `${cleanBase || `reference-${index + 1}`}.${extension}`;
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const possibleMessage = (error as { message?: unknown }).message;
+    if (typeof possibleMessage === "string") {
+      return possibleMessage;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Error desconocido del proveedor.";
+    }
+  }
+
+  return "Error desconocido del proveedor.";
+}
+
 async function fetchReferenceImages(referenceImages: ReferenceImageInput[]) {
   const supportedUploads: File[] = [];
 
@@ -94,6 +121,41 @@ async function fetchReferenceImages(referenceImages: ReferenceImageInput[]) {
   return supportedUploads;
 }
 
+async function generateReferenceBasedVariants({
+  uploads,
+  prompt,
+  size,
+  variantCount,
+}: {
+  uploads: File[];
+  prompt: string;
+  size: SupportedImageSize;
+  variantCount: number;
+}) {
+  const imagesBase64: string[] = [];
+
+  // For reference-image workflows, running one edit request per variant is more reliable
+  // than asking a single edit request for multiple outputs.
+  for (let index = 0; index < variantCount; index += 1) {
+    const editResult = await openai.images.edit({
+      model: "gpt-image-1",
+      image: uploads,
+      prompt,
+      size,
+      n: 1,
+      input_fidelity: "high",
+    });
+
+    const imageBase64 = editResult.data?.[0]?.b64_json;
+
+    if (imageBase64) {
+      imagesBase64.push(imageBase64);
+    }
+  }
+
+  return imagesBase64;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -111,27 +173,20 @@ export async function POST(request: Request) {
     const uploads = await fetchReferenceImages(referenceImages);
     const size = mapSize(format);
 
-    const result = uploads.length > 0
-      ? await openai.images.edit({
-          model: "gpt-image-1",
-          image: uploads,
-          prompt,
-          size,
-          n: variantCount,
-          input_fidelity: "high",
-        })
-      : await openai.images.generate({
-          model: "gpt-image-1",
-          prompt,
-          size,
-          n: variantCount,
-        });
+    const imagesBase64 = uploads.length > 0
+      ? await generateReferenceBasedVariants({ uploads, prompt, size, variantCount })
+      : (
+          await openai.images.generate({
+            model: "gpt-image-1",
+            prompt,
+            size,
+            n: variantCount,
+          })
+        ).data
+          ?.map((image) => image.b64_json)
+          .filter((imageBase64): imageBase64 is string => Boolean(imageBase64)) ?? [];
 
-    const imagesBase64 = result.data
-      ?.map((image) => image.b64_json)
-      .filter((imageBase64): imageBase64 is string => Boolean(imageBase64));
-
-    if (!imagesBase64?.length) {
+    if (!imagesBase64.length) {
       return NextResponse.json(
         { error: "No se recibió ninguna imagen del proveedor." },
         { status: 500 },
@@ -145,10 +200,11 @@ export async function POST(request: Request) {
       usedReferenceImageCount: uploads.length,
     });
   } catch (error) {
+    const errorMessage = getErrorMessage(error);
     console.error("generate-image error", error);
 
     return NextResponse.json(
-      { error: "Error al generar la imagen." },
+      { error: errorMessage || "Error al generar la imagen." },
       { status: 500 },
     );
   }
