@@ -41,6 +41,8 @@ type AssetRecord = {
   tags: string[];
   notes: string;
   fileUrl: string;
+  storagePath?: string;
+  mimeType?: string;
   isFeatured: boolean;
 };
 
@@ -132,6 +134,23 @@ function formatStatus(status: string) {
   }
 }
 
+function isImageAsset(asset: AssetRecord) {
+  const mimeType = asset.mimeType || "";
+  const path = `${asset.fileUrl} ${asset.storagePath || ""}`.toLowerCase();
+
+  return (
+    mimeType.startsWith("image/") ||
+    /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(path) ||
+    path.includes("firebasestorage.googleapis.com")
+  );
+}
+
+function toggleArrayValue(value: string, currentValues: string[]) {
+  return currentValues.includes(value)
+    ? currentValues.filter((currentValue) => currentValue !== value)
+    : [...currentValues, value];
+}
+
 export default function GeneratorPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -141,14 +160,13 @@ export default function GeneratorPage() {
   const [isLoadingRecentRequests, setIsLoadingRecentRequests] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [recentRequests, setRecentRequests] = useState<GenerationRequestSummary[]>([]);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
   const [brandBrain, setBrandBrain] = useState<BrandBrain | null>(null);
-  const [featuredAssets, setFeaturedAssets] = useState<AssetRecord[]>([]);
+  const [clientAssets, setClientAssets] = useState<AssetRecord[]>([]);
 
   const [format, setFormat] = useState("instagram-post");
   const [goal, setGoal] = useState("sell");
@@ -187,6 +205,7 @@ export default function GeneratorPage() {
       const snapshot = await getDocs(query(collection(db, "clients")));
       const loadedClients = snapshot.docs.map((clientDocument) => {
         const data = clientDocument.data();
+
         return {
           id: clientDocument.id,
           name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
@@ -234,9 +253,8 @@ export default function GeneratorPage() {
     setSelectedClientId(clientId);
     setSelectedClient(null);
     setBrandBrain(null);
-    setFeaturedAssets([]);
+    setClientAssets([]);
     setSelectedAssetIds([]);
-    setSuccess("");
     setError("");
 
     if (!clientId) return;
@@ -262,15 +280,12 @@ export default function GeneratorPage() {
       setBrandBrain((clientData.brandBrain as BrandBrain | undefined) ?? null);
 
       const assetsSnapshot = await getDocs(
-        query(
-          collection(db, "clientAssets"),
-          where("clientId", "==", clientId),
-          where("isFeatured", "==", true),
-        ),
+        query(collection(db, "clientAssets"), where("clientId", "==", clientId)),
       );
 
       const loadedAssets = assetsSnapshot.docs.map((assetDocument) => {
         const data = assetDocument.data();
+
         return {
           id: assetDocument.id,
           name: typeof data.name === "string" ? data.name : "Asset sin nombre",
@@ -279,50 +294,36 @@ export default function GeneratorPage() {
           tags: Array.isArray(data.tags) ? data.tags : [],
           notes: typeof data.notes === "string" ? data.notes : "",
           fileUrl: typeof data.fileUrl === "string" ? data.fileUrl : "",
+          storagePath: typeof data.storagePath === "string" ? data.storagePath : "",
+          mimeType: typeof data.mimeType === "string" ? data.mimeType : "",
           isFeatured: data.isFeatured === true,
         } satisfies AssetRecord;
       });
 
-      setFeaturedAssets(loadedAssets);
-      setSelectedAssetIds(loadedAssets.map((asset) => asset.id));
+      loadedAssets.sort((a, b) => Number(b.isFeatured) - Number(a.isFeatured));
+      setClientAssets(loadedAssets);
+
+      const featuredAssetIds = loadedAssets
+        .filter((asset) => asset.isFeatured)
+        .map((asset) => asset.id);
+      setSelectedAssetIds(featuredAssetIds);
 
       const preferredModels = Array.isArray(clientData.brandBrain?.recommendedModels)
         ? clientData.brandBrain.recommendedModels
         : [];
 
-      if (preferredModels.length > 0) {
-        setSelectedModel(preferredModels[0]);
-      } else {
-        setSelectedModel("auto");
-      }
+      setSelectedModel(preferredModels[0] || "auto");
     } catch (contextError) {
       console.error(contextError);
-      setError("No pudimos cargar el Brand Brain y assets destacados del cliente.");
+      setError("No pudimos cargar el Brand Brain y los assets del cliente.");
     } finally {
       setIsLoadingContext(false);
     }
   }
 
-  function toggleSelection(value: string, selectedValues: string[], setter: (values: string[]) => void) {
-    setter(
-      selectedValues.includes(value)
-        ? selectedValues.filter((selectedValue) => selectedValue !== value)
-        : [...selectedValues, value],
-    );
-  }
-
-  function toggleAsset(assetId: string) {
-    setSelectedAssetIds((currentIds) =>
-      currentIds.includes(assetId)
-        ? currentIds.filter((currentId) => currentId !== assetId)
-        : [...currentIds, assetId],
-    );
-  }
-
   async function handleSaveBrief(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    setSuccess("");
 
     if (!selectedClientId || !selectedClient) {
       setError("Selecciona un cliente.");
@@ -337,6 +338,10 @@ export default function GeneratorPage() {
     setIsSaving(true);
 
     try {
+      const selectedAssetsSnapshot = clientAssets.filter((asset) =>
+        selectedAssetIds.includes(asset.id),
+      );
+
       const requestRef = await addDoc(collection(db, "generationRequests"), {
         clientId: selectedClientId,
         clientName: selectedClient.name,
@@ -358,7 +363,7 @@ export default function GeneratorPage() {
         selectedModelLabel: mapModelLabel(selectedModel),
         brandBrainSnapshot: brandBrain ?? {},
         selectedAssetIds,
-        selectedAssetsSnapshot: featuredAssets.filter((asset) => selectedAssetIds.includes(asset.id)),
+        selectedAssetsSnapshot,
         status: "brief_ready",
         createdBy: user?.uid ?? null,
         createdAt: serverTimestamp(),
@@ -376,6 +381,8 @@ export default function GeneratorPage() {
 
   const selectedModelLabel = useMemo(() => mapModelLabel(selectedModel), [selectedModel]);
   const recommendedModels = brandBrain?.recommendedModels ?? [];
+  const selectedAssets = clientAssets.filter((asset) => selectedAssetIds.includes(asset.id));
+  const selectedImageAssetsCount = selectedAssets.filter(isImageAsset).length;
 
   if (isCheckingSession) {
     return (
@@ -391,10 +398,7 @@ export default function GeneratorPage() {
     <main className="min-h-screen bg-zinc-100 px-6 py-8 text-zinc-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
         <header className="rounded-[2rem] bg-zinc-950 p-6 text-white shadow-xl shadow-zinc-300/60 sm:p-8">
-          <Link
-            href="/dashboard"
-            className="mb-5 inline-flex text-sm font-medium text-zinc-300 transition hover:text-white"
-          >
+          <Link href="/dashboard" className="mb-5 inline-flex text-sm font-medium text-zinc-300 transition hover:text-white">
             ← Volver al dashboard
           </Link>
           <p className="mb-2 text-sm font-semibold uppercase tracking-[0.22em] text-zinc-400">
@@ -404,19 +408,15 @@ export default function GeneratorPage() {
             Generador de piezas
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
-            Selecciona una marca, deja que el sistema lea su Brand Brain y prepara el brief visual que luego enviaremos al motor de imagen.
+            Selecciona una marca, carga su Brand Brain, elige los assets que sí deben viajar al request y prepara el brief visual.
           </p>
         </header>
 
         <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Historial
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Briefs recientes
-              </h2>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Historial</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Briefs recientes</h2>
             </div>
             <button
               type="button"
@@ -428,13 +428,9 @@ export default function GeneratorPage() {
           </div>
 
           {isLoadingRecentRequests ? (
-            <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-5 text-sm text-zinc-600">
-              Cargando briefs recientes...
-            </div>
+            <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-5 text-sm text-zinc-600">Cargando briefs recientes...</div>
           ) : recentRequests.length === 0 ? (
-            <div className="mt-5 rounded-3xl border border-dashed border-zinc-300 bg-zinc-50 px-5 py-8 text-center text-sm text-zinc-600">
-              Todavía no hay briefs guardados.
-            </div>
+            <div className="mt-5 rounded-3xl border border-dashed border-zinc-300 bg-zinc-50 px-5 py-8 text-center text-sm text-zinc-600">Todavía no hay briefs guardados.</div>
           ) : (
             <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {recentRequests.map((request) => (
@@ -446,20 +442,14 @@ export default function GeneratorPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-zinc-950">{request.clientName}</p>
-                      <p className="mt-1 line-clamp-3 text-xs leading-5 text-zinc-600">
-                        {request.mainMessage}
-                      </p>
+                      <p className="mt-1 line-clamp-3 text-xs leading-5 text-zinc-600">{request.mainMessage}</p>
                     </div>
                     <span className="rounded-full bg-zinc-950 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white">
                       {formatStatus(request.status)}
                     </span>
                   </div>
-                  <p className="mt-4 text-xs font-medium text-zinc-500">
-                    {request.format || "Formato"} · {request.contentType || "Contenido"}
-                  </p>
-                  <p className="mt-3 text-sm font-semibold text-zinc-950 transition group-hover:translate-x-1">
-                    Abrir →
-                  </p>
+                  <p className="mt-4 text-xs font-medium text-zinc-500">{request.format || "Formato"} · {request.contentType || "Contenido"}</p>
+                  <p className="mt-3 text-sm font-semibold text-zinc-950 transition group-hover:translate-x-1">Abrir →</p>
                 </Link>
               ))}
             </div>
@@ -469,18 +459,12 @@ export default function GeneratorPage() {
         <form className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]" onSubmit={handleSaveBrief}>
           <section className="space-y-6 rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                1. Selecciona la marca
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Contexto automático del cliente
-              </h2>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">1. Selecciona la marca</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Contexto automático del cliente</h2>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-zinc-800" htmlFor="client-select">
-                Cliente
-              </label>
+              <label className="text-sm font-medium text-zinc-800" htmlFor="client-select">Cliente</label>
               <select
                 id="client-select"
                 value={selectedClientId}
@@ -489,20 +473,14 @@ export default function GeneratorPage() {
               >
                 <option value="">Selecciona un cliente</option>
                 {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.name}
-                  </option>
+                  <option key={client.id} value={client.id}>{client.name}</option>
                 ))}
               </select>
-              {isLoadingClients ? (
-                <p className="text-xs text-zinc-500">Cargando clientes...</p>
-              ) : null}
+              {isLoadingClients ? <p className="text-xs text-zinc-500">Cargando clientes...</p> : null}
             </div>
 
             {isLoadingContext ? (
-              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-600">
-                Leyendo Brand Brain y assets destacados...
-              </div>
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-600">Leyendo Brand Brain y assets del cliente...</div>
             ) : null}
 
             {selectedClient ? (
@@ -516,262 +494,115 @@ export default function GeneratorPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Motor sugerido</p>
                   <p className="mt-2 text-lg font-semibold text-zinc-950">{selectedModelLabel}</p>
                   <p className="mt-1 text-sm text-zinc-600">
-                    {recommendedModels.length > 0
-                      ? `Basado en ${recommendedModels.map(mapModelLabel).join(", ")}`
-                      : "Sin preferencia definida en Brand Brain"}
+                    {recommendedModels.length > 0 ? `Basado en ${recommendedModels.map(mapModelLabel).join(", ")}` : "Sin preferencia definida en Brand Brain"}
                   </p>
                 </div>
               </div>
             ) : null}
 
             <div className="border-t border-zinc-200 pt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                2. Define la pieza
-              </p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">2. Define la pieza</p>
               <div className="mt-5 grid gap-5 md:grid-cols-3">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">Formato</label>
-                  <select
-                    value={format}
-                    onChange={(event) => setFormat(event.target.value)}
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  >
-                    {formats.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">Objetivo</label>
-                  <select
-                    value={goal}
-                    onChange={(event) => setGoal(event.target.value)}
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  >
-                    {goals.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">Tipo de contenido</label>
-                  <select
-                    value={contentType}
-                    onChange={(event) => setContentType(event.target.value)}
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  >
-                    {contentTypes.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SelectField label="Formato" value={format} onChange={setFormat} options={formats} />
+                <SelectField label="Objetivo" value={goal} onChange={setGoal} options={goals} />
+                <SelectField label="Tipo de contenido" value={contentType} onChange={setContentType} options={contentTypes} />
               </div>
             </div>
 
             <div className="space-y-5 border-t border-zinc-200 pt-6">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                  3. Mensaje de la publicación
-                </p>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-zinc-800" htmlFor="main-message">
-                  Qué debe entender la persona en 3 segundos
-                </label>
-                <textarea
-                  id="main-message"
-                  value={mainMessage}
-                  onChange={(event) => setMainMessage(event.target.value)}
-                  placeholder="Ej. Promo de lanzamiento con 20% de descuento en todos los paquetes de servicio."
-                  className="min-h-28 w-full rounded-3xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  required
-                />
-              </div>
-
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">3. Mensaje de la publicación</p>
+              <TextAreaField
+                label="Qué debe entender la persona en 3 segundos"
+                value={mainMessage}
+                onChange={setMainMessage}
+                placeholder="Ej. Promo de lanzamiento con 20% de descuento en todos los paquetes de servicio."
+                required
+              />
               <div className="grid gap-5 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">Titular dentro de la imagen</label>
-                  <input
-                    value={headline}
-                    onChange={(event) => setHeadline(event.target.value)}
-                    placeholder="Ej. Llega tu nueva promo"
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">Subtítulo</label>
-                  <input
-                    value={subheadline}
-                    onChange={(event) => setSubheadline(event.target.value)}
-                    placeholder="Ej. Disponible del 10 al 20 de junio"
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid gap-5 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">Precio o promoción</label>
-                  <input
-                    value={priceOrOffer}
-                    onChange={(event) => setPriceOrOffer(event.target.value)}
-                    placeholder="Ej. $2,100 envío incluido"
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-zinc-800">CTA</label>
-                  <input
-                    value={cta}
-                    onChange={(event) => setCta(event.target.value)}
-                    placeholder="Ej. Pide por WhatsApp"
-                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                  />
-                </div>
+                <InputField label="Titular dentro de la imagen" value={headline} onChange={setHeadline} placeholder="Ej. Llega tu nueva promo" />
+                <InputField label="Subtítulo" value={subheadline} onChange={setSubheadline} placeholder="Ej. Disponible del 10 al 20 de junio" />
+                <InputField label="Precio o promoción" value={priceOrOffer} onChange={setPriceOrOffer} placeholder="Ej. $2,100 envío incluido" />
+                <InputField label="CTA" value={cta} onChange={setCta} placeholder="Ej. Pide por WhatsApp" />
               </div>
             </div>
 
             <div className="space-y-5 border-t border-zinc-200 pt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                4. Dirección visual
-              </p>
-
-              <div>
-                <p className="mb-3 text-sm font-medium text-zinc-800">Qué debe transmitir</p>
-                <div className="flex flex-wrap gap-2">
-                  {emotions.map((emotion) => {
-                    const selected = selectedEmotions.includes(emotion);
-                    return (
-                      <button
-                        key={emotion}
-                        type="button"
-                        onClick={() => toggleSelection(emotion, selectedEmotions, setSelectedEmotions)}
-                        className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
-                          selected
-                            ? "border-zinc-950 bg-zinc-950 text-white"
-                            : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                        }`}
-                      >
-                        {emotion}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-3 text-sm font-medium text-zinc-800">Elementos que deben aparecer</p>
-                <div className="flex flex-wrap gap-2">
-                  {visualElements.map((element) => {
-                    const selected = selectedVisualElements.includes(element);
-                    return (
-                      <button
-                        key={element}
-                        type="button"
-                        onClick={() => toggleSelection(element, selectedVisualElements, setSelectedVisualElements)}
-                        className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
-                          selected
-                            ? "border-zinc-950 bg-zinc-950 text-white"
-                            : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                        }`}
-                      >
-                        {element}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-zinc-800">Instrucciones puntuales</label>
-                <textarea
-                  value={specificInstructions}
-                  onChange={(event) => setSpecificInstructions(event.target.value)}
-                  placeholder="Ej. No mover el producto, que la imagen se sienta limpia y de alto valor, evitar exceso de texto."
-                  className="min-h-28 w-full rounded-3xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                />
-              </div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">4. Dirección visual</p>
+              <ChipSelector label="Qué debe transmitir" values={emotions} selectedValues={selectedEmotions} onToggle={(value) => setSelectedEmotions(toggleArrayValue(value, selectedEmotions))} />
+              <ChipSelector label="Elementos que deben aparecer" values={visualElements} selectedValues={selectedVisualElements} onToggle={(value) => setSelectedVisualElements(toggleArrayValue(value, selectedVisualElements))} />
+              <TextAreaField
+                label="Instrucciones puntuales"
+                value={specificInstructions}
+                onChange={setSpecificInstructions}
+                placeholder="Ej. No mover el producto, que la imagen se sienta limpia y de alto valor, evitar exceso de texto."
+              />
             </div>
           </section>
 
           <aside className="space-y-6">
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Contexto leído
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Brand Brain
-              </h2>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Contexto leído</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Brand Brain</h2>
               {!selectedClient ? (
-                <p className="mt-4 text-sm leading-6 text-zinc-600">
-                  Selecciona un cliente para ver la información que alimentará el prompt.
-                </p>
+                <p className="mt-4 text-sm leading-6 text-zinc-600">Selecciona un cliente para ver la información que alimentará el prompt.</p>
               ) : (
                 <div className="mt-5 space-y-4 text-sm leading-6 text-zinc-600">
-                  <div>
-                    <p className="font-semibold text-zinc-900">Descripción</p>
-                    <p>{brandBrain?.brandDescription || "Sin descripción todavía."}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-zinc-900">Tono</p>
-                    <p>{brandBrain?.tone || "Sin tono definido."}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-zinc-900">Estilo visual</p>
-                    <p>{brandBrain?.visualStyle?.join(", ") || "Sin estilo definido."}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-zinc-900">Colores</p>
-                    <p>{brandBrain?.colors?.join(", ") || "Sin colores registrados."}</p>
-                  </div>
+                  <SummaryItem label="Descripción" value={brandBrain?.brandDescription || "Sin descripción todavía."} />
+                  <SummaryItem label="Tono" value={brandBrain?.tone || "Sin tono definido."} />
+                  <SummaryItem label="Estilo visual" value={brandBrain?.visualStyle?.join(", ") || "Sin estilo definido."} />
+                  <SummaryItem label="Colores" value={brandBrain?.colors?.join(", ") || "Sin colores registrados."} />
                 </div>
               )}
             </section>
 
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Assets priorizados
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Assets del cliente</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Elegir para este brief</h2>
+              <p className="mt-2 text-sm leading-6 text-zinc-600">
+                Los destacados se preseleccionan, pero puedes agregar o quitar cualquier asset.
               </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Usar en esta pieza
-              </h2>
 
               {!selectedClient ? (
-                <p className="mt-4 text-sm leading-6 text-zinc-600">
-                  Selecciona un cliente para ver sus assets destacados.
-                </p>
-              ) : featuredAssets.length === 0 ? (
-                <p className="mt-4 text-sm leading-6 text-zinc-600">
-                  Este cliente aún no tiene assets destacados. Puedes seguir, pero conviene marcar al menos un logo o referencia.
-                </p>
+                <p className="mt-4 text-sm leading-6 text-zinc-600">Selecciona un cliente para ver sus assets.</p>
+              ) : clientAssets.length === 0 ? (
+                <p className="mt-4 text-sm leading-6 text-zinc-600">Este cliente aún no tiene assets cargados.</p>
               ) : (
                 <div className="mt-5 grid gap-3">
-                  {featuredAssets.map((asset) => {
+                  {clientAssets.map((asset) => {
                     const selected = selectedAssetIds.includes(asset.id);
+                    const imageAsset = isImageAsset(asset);
+
                     return (
                       <button
                         key={asset.id}
                         type="button"
-                        onClick={() => toggleAsset(asset.id)}
-                        className={`rounded-3xl border p-4 text-left transition ${
-                          selected
-                            ? "border-zinc-950 bg-zinc-950 text-white"
-                            : "border-zinc-200 bg-zinc-50 text-zinc-900 hover:bg-white"
-                        }`}
+                        onClick={() => setSelectedAssetIds(toggleArrayValue(asset.id, selectedAssetIds))}
+                        className={`rounded-3xl border p-4 text-left transition ${selected ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 bg-zinc-50 text-zinc-900 hover:bg-white"}`}
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">{asset.name}</p>
+                        <div className="grid grid-cols-[56px_1fr] items-center gap-3">
+                          <div className={`overflow-hidden rounded-2xl border ${selected ? "border-white/20 bg-white/10" : "border-zinc-200 bg-white"}`}>
+                            {imageAsset ? (
+                              <img src={asset.fileUrl} alt={asset.name} className="h-14 w-full object-contain p-2" />
+                            ) : (
+                              <div className="flex h-14 items-center justify-center text-[10px] font-semibold uppercase tracking-[0.12em]">File</div>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-semibold">{asset.name}</p>
+                              {asset.isFeatured ? (
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${selected ? "bg-white text-zinc-950" : "bg-amber-100 text-amber-800"}`}>
+                                  Destacado
+                                </span>
+                              ) : null}
+                            </div>
                             <p className={`mt-1 text-xs ${selected ? "text-zinc-300" : "text-zinc-500"}`}>
-                              {asset.type} {asset.category ? `· ${asset.category}` : ""}
+                              {asset.type || "asset"} {asset.category ? `· ${asset.category}` : ""}
+                              {imageAsset ? " · imagen usable" : ""}
                             </p>
                           </div>
+                        </div>
+                        <div className="mt-3 flex justify-end">
                           <span className={`rounded-full px-3 py-1 text-xs font-semibold ${selected ? "bg-white text-zinc-950" : "bg-zinc-950 text-white"}`}>
                             {selected ? "Usar" : "Omitir"}
                           </span>
@@ -781,44 +612,26 @@ export default function GeneratorPage() {
                   })}
                 </div>
               )}
+
+              {selectedClient ? (
+                <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
+                  <p><span className="font-semibold text-zinc-950">{selectedAssetIds.length}</span> asset(s) seleccionados.</p>
+                  <p><span className="font-semibold text-zinc-950">{selectedImageAssetsCount}</span> asset(s) de imagen podrán usarse como referencias visuales reales.</p>
+                </div>
+              ) : null}
             </section>
 
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Motor de IA
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Selección del generador
-              </h2>
-              <div className="mt-5 space-y-2">
-                <label className="text-sm font-medium text-zinc-800">Modelo</label>
-                <select
-                  value={selectedModel}
-                  onChange={(event) => setSelectedModel(event.target.value)}
-                  className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
-                >
-                  {supportedModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label}
-                    </option>
-                  ))}
-                </select>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Motor de IA</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Selección del generador</h2>
+              <div className="mt-5">
+                <SelectField label="Modelo" value={selectedModel} onChange={setSelectedModel} options={supportedModels} />
               </div>
-              <p className="mt-3 text-sm leading-6 text-zinc-600">
-                Selección actual: <span className="font-semibold text-zinc-950">{selectedModelLabel}</span>
-              </p>
+              <p className="mt-3 text-sm leading-6 text-zinc-600">Selección actual: <span className="font-semibold text-zinc-950">{selectedModelLabel}</span></p>
             </section>
 
             {error ? (
-              <div className="rounded-3xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-                {error}
-              </div>
-            ) : null}
-
-            {success ? (
-              <div className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm leading-6 text-emerald-700">
-                {success}
-              </div>
+              <div className="rounded-3xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">{error}</div>
             ) : null}
 
             <button
@@ -832,5 +645,125 @@ export default function GeneratorPage() {
         </form>
       </div>
     </main>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ id: string; label: string }>;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium text-zinc-800">{label}</label>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>{option.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function InputField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium text-zinc-800">{label}</label>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
+      />
+    </div>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  required?: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium text-zinc-800">{label}</label>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        required={required}
+        className="min-h-28 w-full rounded-3xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
+      />
+    </div>
+  );
+}
+
+function ChipSelector({
+  label,
+  values,
+  selectedValues,
+  onToggle,
+}: {
+  label: string;
+  values: string[];
+  selectedValues: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-3 text-sm font-medium text-zinc-800">{label}</p>
+      <div className="flex flex-wrap gap-2">
+        {values.map((value) => {
+          const selected = selectedValues.includes(value);
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onToggle(value)}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${selected ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"}`}
+            >
+              {value}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SummaryItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="font-semibold text-zinc-900">{label}</p>
+      <p>{value}</p>
+    </div>
   );
 }
