@@ -119,12 +119,18 @@ const visualElements = [
 ];
 
 const supportedModels = [
-  { id: "auto", label: "Automático recomendado" },
-  { id: "nano-banana", label: "Nano Banana" },
-  { id: "gpt-image", label: "GPT Image" },
-  { id: "firefly", label: "Adobe Firefly" },
-  { id: "ideogram", label: "Ideogram" },
-  { id: "flux", label: "Flux" },
+  {
+    id: "draft-mini-low",
+    label: "Borrador económico · GPT Image Mini",
+  },
+  {
+    id: "nano-banana",
+    label: "Calidad para redes · Nano Banana",
+  },
+  {
+    id: "gpt-image",
+    label: "GPT Image estándar",
+  },
 ];
 
 const requestAttachmentRoles = [
@@ -209,7 +215,7 @@ export default function GeneratorPage() {
   const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
   const [selectedVisualElements, setSelectedVisualElements] = useState<string[]>([]);
   const [specificInstructions, setSpecificInstructions] = useState("");
-  const [selectedModel, setSelectedModel] = useState("auto");
+  const [selectedModel, setSelectedModel] = useState("draft-mini-low");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
   const [requestImageFile, setRequestImageFile] = useState<File | null>(null);
@@ -356,7 +362,7 @@ export default function GeneratorPage() {
         ? clientData.brandBrain.recommendedModels
         : [];
 
-      setSelectedModel(preferredModels[0] || "auto");
+      setSelectedModel(preferredModels[0] || "draft-mini-low");
     } catch (contextError) {
       console.error(contextError);
       setError("No pudimos cargar el Brand Brain y los assets del cliente.");
