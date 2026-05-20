@@ -189,22 +189,29 @@ async function generateOpenAIReferenceBasedVariants({
   prompt,
   size,
   variantCount,
+  model,
+  quality,
+  inputFidelity,
 }: {
   uploads: File[];
   prompt: string;
   size: SupportedOpenAIImageSize;
   variantCount: number;
+  model: "gpt-image-1" | "gpt-image-1-mini";
+  quality: "low" | "medium";
+  inputFidelity: "low" | "high";
 }) {
   const imagesBase64: string[] = [];
 
   for (let index = 0; index < variantCount; index += 1) {
     const editResult = await openai.images.edit({
-      model: "gpt-image-1",
+      model,
       image: uploads,
       prompt,
       size,
       n: 1,
-      input_fidelity: "high",
+      quality,
+      input_fidelity: inputFidelity,
     });
 
     const imageBase64 = editResult.data?.[0]?.b64_json;
@@ -222,23 +229,38 @@ async function generateWithOpenAI({
   format,
   variantCount,
   referenceImages,
+  model,
+  quality,
+  inputFidelity,
 }: {
   prompt: string;
   format?: string;
   variantCount: number;
   referenceImages: ReferenceImageInput[];
+  model: "gpt-image-1" | "gpt-image-1-mini";
+  quality: "low" | "medium";
+  inputFidelity: "low" | "high";
 }) {
   const uploads = await fetchReferenceImagesForOpenAI(referenceImages);
   const size = mapOpenAISize(format);
 
   const imagesBase64 = uploads.length > 0
-    ? await generateOpenAIReferenceBasedVariants({ uploads, prompt, size, variantCount })
+    ? await generateOpenAIReferenceBasedVariants({
+        uploads,
+        prompt,
+        size,
+        variantCount,
+        model,
+        quality,
+        inputFidelity,
+      })
     : (
         await openai.images.generate({
-          model: "gpt-image-1",
+          model,
           prompt,
           size,
           n: variantCount,
+          quality,
         })
       ).data
         ?.map((image) => image.b64_json)
@@ -246,7 +268,7 @@ async function generateWithOpenAI({
 
   return {
     imagesBase64,
-    executedModel: "gpt-image-1",
+    executedModel: `${model}:${quality}`,
     generationMode: uploads.length > 0 ? "visual-references" : "text-only",
     usedReferenceImageCount: uploads.length,
   };
@@ -333,9 +355,6 @@ async function generateWithNanoBananaPro({
   const referenceParts = await fetchReferenceImagesForGemini(referenceImages);
   const aspectRatio = mapGeminiAspectRatio(format);
   const imagesBase64: string[] = [];
-
-  // The current UI option "Nano Banana" is intentionally routed to
-  // Gemini 3 Pro Image Preview because it is the strongest Google image option for polished commercial artwork.
   const geminiModel = "gemini-3-pro-image-preview";
 
   for (let index = 0; index < variantCount; index += 1) {
@@ -362,7 +381,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const prompt = typeof body.prompt === "string" ? body.prompt : "";
     const format = typeof body.format === "string" ? body.format : "square-post";
-    const selectedModel = typeof body.model === "string" ? body.model : "auto";
+    const selectedModel = typeof body.model === "string" ? body.model : "draft-mini-low";
     const variantCount = normalizeVariantCount(body.variantCount);
     const referenceImages = Array.isArray(body.referenceImages)
       ? (body.referenceImages as ReferenceImageInput[])
@@ -374,7 +393,25 @@ export async function POST(request: Request) {
 
     const result = selectedModel === "nano-banana"
       ? await generateWithNanoBananaPro({ prompt, format, variantCount, referenceImages })
-      : await generateWithOpenAI({ prompt, format, variantCount, referenceImages });
+      : selectedModel === "draft-mini-low"
+        ? await generateWithOpenAI({
+            prompt,
+            format,
+            variantCount,
+            referenceImages,
+            model: "gpt-image-1-mini",
+            quality: "low",
+            inputFidelity: "low",
+          })
+        : await generateWithOpenAI({
+            prompt,
+            format,
+            variantCount,
+            referenceImages,
+            model: "gpt-image-1",
+            quality: "medium",
+            inputFidelity: "high",
+          });
 
     if (!result.imagesBase64.length) {
       return NextResponse.json(
