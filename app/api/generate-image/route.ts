@@ -33,12 +33,12 @@ type GeminiReferencePart = {
 
 function mapOpenAISize(format?: string): SupportedOpenAIImageSize {
   switch (format) {
+    case "instagram-post":
     case "instagram-story":
     case "reel-cover":
       return "1024x1536";
     case "ad-creative":
       return "1536x1024";
-    case "instagram-post":
     case "square-post":
     default:
       return "1024x1024";
