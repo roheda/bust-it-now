@@ -252,6 +252,37 @@ function getLogoPosition({
   }
 }
 
+async function makeLogoBackgroundTransparent(logoBuffer: Buffer) {
+  const normalizedLogo = sharp(logoBuffer).ensureAlpha().png();
+  const metadata = await normalizedLogo.metadata();
+  const width = metadata.width || 1;
+  const height = metadata.height || 1;
+  const rawBuffer = await normalizedLogo.raw().toBuffer();
+
+  for (let index = 0; index < rawBuffer.length; index += 4) {
+    const red = rawBuffer[index];
+    const green = rawBuffer[index + 1];
+    const blue = rawBuffer[index + 2];
+    const alpha = rawBuffer[index + 3];
+    const isNearWhite = red >= 245 && green >= 245 && blue >= 245;
+    const isVeryLight = red >= 238 && green >= 238 && blue >= 238;
+
+    if (alpha > 0 && (isNearWhite || isVeryLight)) {
+      rawBuffer[index + 3] = 0;
+    }
+  }
+
+  return sharp(rawBuffer, {
+    raw: {
+      width,
+      height,
+      channels: 4,
+    },
+  })
+    .png()
+    .toBuffer();
+}
+
 async function applyLogoOverlayToImage(imageBase64: string, logoOverlay?: LogoOverlayInput) {
   if (!logoOverlay?.enabled || !logoOverlay.fileUrl) {
     return imageBase64;
@@ -263,8 +294,9 @@ async function applyLogoOverlayToImage(imageBase64: string, logoOverlay?: LogoOv
   const baseHeight = baseMetadata.height || 1024;
 
   const logoBuffer = await fetchImageBuffer(logoOverlay.fileUrl);
+  const transparentLogoBuffer = await makeLogoBackgroundTransparent(logoBuffer);
   const targetLogoWidth = getLogoTargetWidth(baseWidth, logoOverlay.size);
-  const resizedLogoBuffer = await sharp(logoBuffer)
+  const resizedLogoBuffer = await sharp(transparentLogoBuffer)
     .resize({ width: targetLogoWidth, withoutEnlargement: true })
     .png()
     .toBuffer();
