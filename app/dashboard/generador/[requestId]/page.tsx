@@ -25,11 +25,16 @@ import {
 type GeneratedImageRecord = {
   id: string;
   imageUrl: string;
+  storagePath?: string;
   requestedModel: string;
   executedModel: string;
   generationMode?: string;
   usedReferenceImageCount?: number;
   isFinal: boolean;
+  liked: boolean;
+  feedback?: string;
+  savedAsAsset: boolean;
+  assetId?: string;
 };
 
 type SelectedAssetSnapshot = {
@@ -93,6 +98,11 @@ function attachmentRoleLabel(role?: string) {
   };
 
   return map[role || ""] || role || "Referencia puntual";
+}
+
+function buildApprovedAssetName(requestData: RequestData, imageId: string) {
+  const clientName = requestData.clientName || "Cliente";
+  return `Referencia aprobada - ${clientName} - ${imageId.slice(0, 6)}`;
 }
 
 export default function GeneratorRequestDetailPage() {
@@ -164,6 +174,7 @@ export default function GeneratorRequestDetailPage() {
         return {
           id: imageDocument.id,
           imageUrl: typeof data.imageUrl === "string" ? data.imageUrl : "",
+          storagePath: typeof data.storagePath === "string" ? data.storagePath : undefined,
           requestedModel:
             typeof data.requestedModel === "string" ? data.requestedModel : "",
           executedModel:
@@ -175,6 +186,10 @@ export default function GeneratorRequestDetailPage() {
               ? data.usedReferenceImageCount
               : undefined,
           isFinal: data.isFinal === true,
+          liked: data.liked === true,
+          feedback: typeof data.feedback === "string" ? data.feedback : undefined,
+          savedAsAsset: data.savedAsAsset === true,
+          assetId: typeof data.assetId === "string" ? data.assetId : undefined,
         } satisfies GeneratedImageRecord;
       });
 
@@ -242,7 +257,7 @@ export default function GeneratorRequestDetailPage() {
         body: JSON.stringify({
           prompt: promptText,
           format: requestData.format,
-          model: requestData.selectedModel || "auto",
+          model: requestData.selectedModel || "draft-mini-low",
           variantCount,
           referenceImages: referenceImagesPayload,
         }),
@@ -282,8 +297,8 @@ export default function GeneratorRequestDetailPage() {
           imageUrl,
           storagePath,
           prompt: promptText,
-          requestedModel: requestData.selectedModel || "auto",
-          requestedModelLabel: requestData.selectedModelLabel || "Automático",
+          requestedModel: requestData.selectedModel || "draft-mini-low",
+          requestedModelLabel: requestData.selectedModelLabel || "Borrador económico",
           executedModel: result.executedModel,
           generationMode: result.generationMode || "text-only",
           usedReferenceImageCount:
@@ -291,6 +306,9 @@ export default function GeneratorRequestDetailPage() {
               ? result.usedReferenceImageCount
               : 0,
           isFinal: false,
+          liked: false,
+          feedback: "none",
+          savedAsAsset: false,
           status: "completed",
           createdBy: auth.currentUser?.uid ?? null,
           createdAt: serverTimestamp(),
@@ -352,6 +370,106 @@ export default function GeneratorRequestDetailPage() {
     } catch (markError) {
       console.error(markError);
       setError("No pudimos marcar esta imagen como final.");
+    } finally {
+      setBusyImageId(null);
+    }
+  }
+
+  async function handleToggleLike(image: GeneratedImageRecord) {
+    setError("");
+    setSuccess("");
+    setBusyImageId(image.id);
+
+    const nextLikedValue = !image.liked;
+
+    try {
+      await updateDoc(doc(db, "generatedImages", image.id), {
+        liked: nextLikedValue,
+        feedback: nextLikedValue ? "positive" : "none",
+        feedbackUpdatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setGeneratedImages((currentImages) =>
+        currentImages.map((currentImage) =>
+          currentImage.id === image.id
+            ? {
+                ...currentImage,
+                liked: nextLikedValue,
+                feedback: nextLikedValue ? "positive" : "none",
+              }
+            : currentImage,
+        ),
+      );
+
+      setSuccess(nextLikedValue ? "Feedback guardado: esta imagen gustó." : "Like removido.");
+    } catch (feedbackError) {
+      console.error(feedbackError);
+      setError("No pudimos guardar el feedback de esta imagen.");
+    } finally {
+      setBusyImageId(null);
+    }
+  }
+
+  async function handleSaveAsClientAsset(image: GeneratedImageRecord) {
+    if (!requestData?.clientId) {
+      setError("No encontramos el cliente para guardar este asset.");
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+    setBusyImageId(image.id);
+
+    try {
+      const assetRef = await addDoc(collection(db, "clientAssets"), {
+        clientId: requestData.clientId,
+        clientName: requestData.clientName || "",
+        name: buildApprovedAssetName(requestData, image.id),
+        type: "generated-reference",
+        category: "referencia-aprobada",
+        tags: ["generada", "aprobada", "bust-it-now", requestData.format || "social-media"],
+        notes:
+          "Imagen generada en BUST IT NOW y aprobada como referencia visual para futuras piezas de este cliente.",
+        fileUrl: image.imageUrl,
+        storagePath: image.storagePath || "",
+        mimeType: "image/png",
+        isFeatured: true,
+        source: "generated-image",
+        sourceRequestId: requestId,
+        sourceGeneratedImageId: image.id,
+        createdBy: auth.currentUser?.uid ?? null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      await updateDoc(doc(db, "generatedImages", image.id), {
+        savedAsAsset: true,
+        assetId: assetRef.id,
+        liked: true,
+        feedback: "positive",
+        savedAsAssetAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setGeneratedImages((currentImages) =>
+        currentImages.map((currentImage) =>
+          currentImage.id === image.id
+            ? {
+                ...currentImage,
+                savedAsAsset: true,
+                assetId: assetRef.id,
+                liked: true,
+                feedback: "positive",
+              }
+            : currentImage,
+        ),
+      );
+
+      setSuccess("Imagen guardada como asset del cliente y marcada con like.");
+    } catch (assetError) {
+      console.error(assetError);
+      setError("No pudimos guardar esta imagen como asset del cliente.");
     } finally {
       setBusyImageId(null);
     }
@@ -599,6 +717,12 @@ export default function GeneratorRequestDetailPage() {
                         {image.isFinal ? (
                           <span className="absolute left-3 top-3 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Final</span>
                         ) : null}
+                        {image.liked ? (
+                          <span className="absolute right-3 top-3 rounded-full bg-zinc-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">👍 Gustó</span>
+                        ) : null}
+                        {image.savedAsAsset ? (
+                          <span className="absolute bottom-3 left-3 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Asset</span>
+                        ) : null}
                         <img src={image.imageUrl} alt="Imagen generada" className="w-full" />
                       </div>
                       <div className="mt-3 space-y-3">
@@ -609,10 +733,27 @@ export default function GeneratorRequestDetailPage() {
                             <br />
                             Modo: {image.generationMode || "text-only"}
                             {typeof image.usedReferenceImageCount === "number" ? ` · Referencias usadas: ${image.usedReferenceImageCount}` : ""}
+                            {image.savedAsAsset ? " · Guardada como asset" : ""}
                           </p>
                         </div>
-                        <div className="flex flex-col gap-2 sm:flex-row">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                           <a href={image.imageUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800">Ver archivo</a>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleLike(image)}
+                            disabled={busyImageId === image.id}
+                            className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${image.liked ? "border-zinc-950 bg-zinc-950 text-white hover:bg-zinc-800" : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-100"}`}
+                          >
+                            {image.liked ? "👍 Me gusta" : "👍 Marcar que gustó"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveAsClientAsset(image)}
+                            disabled={busyImageId === image.id || image.savedAsAsset}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {image.savedAsAsset ? "Guardada como asset" : "⭐ Guardar como asset"}
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleMarkFinal(image)}
