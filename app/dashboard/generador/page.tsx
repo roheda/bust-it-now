@@ -295,15 +295,18 @@ export default function GeneratorPage() {
 
     try {
       const snapshot = await getDocs(query(collection(db, "clients")));
-      const loadedClients = snapshot.docs.map((clientDocument) => {
-        const data = clientDocument.data();
+const loadedClients = snapshot.docs
+  .map((clientDocument) => {
+    const data = clientDocument.data();
 
-        return {
-          id: clientDocument.id,
-          name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
-          industry: typeof data.industry === "string" ? data.industry : "",
-        } satisfies ClientRecord;
-      });
+    return {
+      id: clientDocument.id,
+      name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
+      industry: typeof data.industry === "string" ? data.industry : "",
+      status: typeof data.status === "string" ? data.status : "active",
+    };
+  })
+  .filter((client) => client.status !== "deleted");
 
       loadedClients.sort((a, b) => a.name.localeCompare(b.name, "es"));
       setClients(loadedClients);
