@@ -116,9 +116,9 @@ export function buildGenerationPrompt(data: BuildPromptInput) {
       : "No specific request attachments.";
 
   const logoOverlayText = data.logoOverlay?.enabled
-    ? `A real official logo will be overlaid after image generation as a fixed, exact layer. Leave a clean, low-detail space in the ${logoPositionLabel(
+    ? `A real official logo will be overlaid after image generation as a fixed, exact layer. Leave natural negative space in the ${logoPositionLabel(
         data.logoOverlay.position,
-      )} for the official logo named ${data.logoOverlay.assetName || "official logo"}. Do not draw, recreate, distort, fake, or reinterpret the logo inside the AI-generated image.`
+      )} so the logo can be placed later. Do not draw any logo, brand name, placeholder text, white rectangle, label, frame, badge, container, or empty box for the logo. The generated image should look complete and natural even before the logo is overlaid.`
     : "No logo overlay requested for this piece. Do not force a logo into the design.";
 
   const assetsText =
@@ -206,7 +206,7 @@ ART DIRECTION RULES
 - Create visual depth, deliberate hierarchy, premium finishing, and an intentional composition.
 - Use strong focal points, background treatment, subtle lighting, shadows, and graphic systems that support the message.
 - If a specific product, dish, or object attachment is provided, prioritize it visually and make it feel integrated into the design.
-- If a logo overlay is requested, reserve the requested clean area but do not generate the logo itself.
+- If a logo overlay is requested, only reserve natural visual breathing room in the requested area. Never create a visible logo placeholder, white box, label, or fake logo area.
 - Keep the communication instantly understandable at a glance.
 - Respect the brand style, emotional tone, and commercial objective.
 - Avoid random decorative clutter that does not reinforce the message.
@@ -214,6 +214,7 @@ ART DIRECTION RULES
 TEXT RULES
 - Only include the exact headline, subheadline, offer, and CTA provided above when they are specified.
 - Do not invent extra words, numbers, dates, product names, or claims.
+- Do not add any logo text, brand-name placeholder, or logo label.
 - If text appears inside the image, it must be clean, legible, and placed with clear hierarchy.
 
 BRAND SAFETY RULES
