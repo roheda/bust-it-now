@@ -76,6 +76,25 @@ const variantOptions = [
   { value: 4, label: "4 variantes" },
 ];
 
+const generationModelOptions = [
+  {
+    id: "draft-mini-low",
+    label: "Borrador económico · GPT Image Mini",
+  },
+  {
+    id: "nano-banana",
+    label: "Calidad para redes · Nano Banana",
+  },
+  {
+    id: "gpt-image",
+    label: "GPT Image estándar",
+  },
+];
+
+function mapGenerationModelLabel(modelId: string) {
+  return generationModelOptions.find((model) => model.id === modelId)?.label ?? modelId;
+}
+
 function isImageReference(item: { fileUrl?: string; storagePath?: string; mimeType?: string }) {
   const mimeType = item.mimeType || "";
   const path = `${item.fileUrl || ""} ${item.storagePath || ""}`.toLowerCase();
@@ -120,6 +139,7 @@ export default function GeneratorRequestDetailPage() {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageRecord[]>([]);
   const [variantCount, setVariantCount] = useState(1);
   const [useVisualReferences, setUseVisualReferences] = useState(true);
+  const [generationModel, setGenerationModel] = useState("draft-mini-low");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -236,8 +256,49 @@ export default function GeneratorRequestDetailPage() {
 
   const availableReferenceCount = requestAttachmentReferences.length + visualReferenceAssets.length;
 
+  useEffect(() => {
+    if (!requestData) return;
+
+    setGenerationModel(requestData.selectedModel || "draft-mini-low");
+  }, [requestData]);
+
+  async function handleChangeGenerationModel(nextModel: string) {
+    if (!requestData) return;
+
+    const nextModelLabel = mapGenerationModelLabel(nextModel);
+
+    setGenerationModel(nextModel);
+    setError("");
+    setSuccess("");
+
+    try {
+      await updateDoc(doc(db, "generationRequests", requestId), {
+        selectedModel: nextModel,
+        selectedModelLabel: nextModelLabel,
+        updatedAt: serverTimestamp(),
+      });
+
+      setRequestData((currentRequest) =>
+        currentRequest
+          ? {
+              ...currentRequest,
+              selectedModel: nextModel,
+              selectedModelLabel: nextModelLabel,
+            }
+          : currentRequest,
+      );
+
+      setSuccess("Modelo actualizado para este request.");
+    } catch (modelError) {
+      console.error(modelError);
+      setError("No pudimos actualizar el modelo de este request.");
+    }
+  }
+
   async function handleGenerateImage() {
     if (!requestData) return;
+
+    const currentGenerationModel = generationModel || requestData.selectedModel || "draft-mini-low";
 
     setError("");
     setSuccess("");
@@ -246,6 +307,8 @@ export default function GeneratorRequestDetailPage() {
     try {
       await updateDoc(doc(db, "generationRequests", requestId), {
         status: "generating",
+        selectedModel: currentGenerationModel,
+        selectedModelLabel: mapGenerationModelLabel(currentGenerationModel),
         updatedAt: serverTimestamp(),
       });
 
@@ -257,7 +320,7 @@ export default function GeneratorRequestDetailPage() {
         body: JSON.stringify({
           prompt: promptText,
           format: requestData.format,
-          model: requestData.selectedModel || "draft-mini-low",
+          model: currentGenerationModel,
           variantCount,
           referenceImages: referenceImagesPayload,
         }),
@@ -297,8 +360,8 @@ export default function GeneratorRequestDetailPage() {
           imageUrl,
           storagePath,
           prompt: promptText,
-          requestedModel: requestData.selectedModel || "draft-mini-low",
-          requestedModelLabel: requestData.selectedModelLabel || "Borrador económico",
+          requestedModel: currentGenerationModel,
+          requestedModelLabel: mapGenerationModelLabel(currentGenerationModel),
           executedModel: result.executedModel,
           generationMode: result.generationMode || "text-only",
           usedReferenceImageCount:
@@ -317,6 +380,8 @@ export default function GeneratorRequestDetailPage() {
 
       await updateDoc(doc(db, "generationRequests", requestId), {
         status: "completed",
+        selectedModel: currentGenerationModel,
+        selectedModelLabel: mapGenerationModelLabel(currentGenerationModel),
         updatedAt: serverTimestamp(),
       });
 
@@ -541,7 +606,7 @@ export default function GeneratorRequestDetailPage() {
                 <p className="mt-2 text-base font-medium text-zinc-900">{requestData.contentType || "-"}</p>
               </div>
               <div className="rounded-2xl bg-zinc-50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Modelo solicitado</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Modelo actual</p>
                 <p className="mt-2 text-base font-medium text-zinc-900">{requestData.selectedModelLabel || requestData.selectedModel || "-"}</p>
               </div>
             </div>
@@ -588,8 +653,29 @@ export default function GeneratorRequestDetailPage() {
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Acción</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">Generar variantes</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                Puedes sacar 1, 2 o 4 versiones. Si hay referencias visuales seleccionadas, la generación las usará; las adjuntas a este brief viajan primero.
+                Puedes reutilizar este mismo brief y cambiar el motor antes de generar nuevas variantes.
               </p>
+
+              <div className="mt-5 space-y-2">
+                <label className="text-sm font-medium text-zinc-800" htmlFor="generation-model">
+                  Modelo para esta generación
+                </label>
+                <select
+                  id="generation-model"
+                  value={generationModel}
+                  onChange={(event) => handleChangeGenerationModel(event.target.value)}
+                  className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
+                >
+                  {generationModelOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm leading-6 text-zinc-600">
+                  El modelo seleccionado se guarda en este request y cada imagen registra con qué motor fue generada.
+                </p>
+              </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 {variantOptions.map((option) => {
@@ -730,6 +816,8 @@ export default function GeneratorRequestDetailPage() {
                           <p className="text-sm font-semibold text-zinc-900">Generada</p>
                           <p className="text-xs leading-5 text-zinc-500">
                             Ejecutado con: {image.executedModel}
+                            <br />
+                            Solicitado: {image.requestedModel || "-"}
                             <br />
                             Modo: {image.generationMode || "text-only"}
                             {typeof image.usedReferenceImageCount === "number" ? ` · Referencias usadas: ${image.usedReferenceImageCount}` : ""}
