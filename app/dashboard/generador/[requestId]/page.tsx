@@ -241,18 +241,29 @@ export default function GeneratorRequestDetailPage() {
     return requestData.selectedAssetsSnapshot.filter(isImageReference);
   }, [requestData]);
 
-  const referenceImagesPayload = useMemo(() => {
-    if (!useVisualReferences) return [];
+const referenceImagesPayload = useMemo(() => {
+  if (!useVisualReferences) return [];
 
-    const assetReferences = visualReferenceAssets
-      .filter((asset) => typeof asset.fileUrl === "string" && asset.fileUrl.length > 0)
-      .map((asset) => ({
-        url: asset.fileUrl || "",
-        name: asset.name,
-      }));
+  const selectedLogoAssetId = requestData?.logoOverlay?.assetId;
 
-    return [...requestAttachmentReferences, ...assetReferences];
-  }, [requestAttachmentReferences, useVisualReferences, visualReferenceAssets]);
+  const assetReferences = visualReferenceAssets
+    .filter((asset) => {
+      if (typeof asset.fileUrl !== "string" || asset.fileUrl.length === 0) return false;
+      if (selectedLogoAssetId && asset.id === selectedLogoAssetId) return false;
+      return true;
+    })
+    .map((asset) => ({
+      url: asset.fileUrl || "",
+      name: asset.name,
+    }));
+
+  return [...requestAttachmentReferences, ...assetReferences];
+}, [
+  requestAttachmentReferences,
+  requestData?.logoOverlay?.assetId,
+  useVisualReferences,
+  visualReferenceAssets,
+]);
 
   const availableReferenceCount = requestAttachmentReferences.length + visualReferenceAssets.length;
 
@@ -317,13 +328,14 @@ export default function GeneratorRequestDetailPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          prompt: promptText,
-          format: requestData.format,
-          model: currentGenerationModel,
-          variantCount,
-          referenceImages: referenceImagesPayload,
-        }),
+       body: JSON.stringify({
+  prompt: promptText,
+  format: requestData.format,
+  model: currentGenerationModel,
+  variantCount,
+  referenceImages: referenceImagesPayload,
+  logoOverlay: requestData.logoOverlay ?? null,
+}),
       });
 
       const result = await response.json();
