@@ -57,6 +57,15 @@ type RequestAttachmentRecord = {
   mimeType: string;
 };
 
+type LogoOverlayRecord = {
+  enabled: boolean;
+  assetId?: string;
+  assetName?: string;
+  fileUrl?: string;
+  position?: string;
+  size?: string;
+};
+
 type GenerationRequestSummary = {
   id: string;
   clientName: string;
@@ -141,6 +150,20 @@ const requestAttachmentRoles = [
   { id: "promocion", label: "Promoción" },
 ];
 
+const logoPositions = [
+  { id: "top-left", label: "Arriba izquierda" },
+  { id: "top-right", label: "Arriba derecha" },
+  { id: "bottom-left", label: "Abajo izquierda" },
+  { id: "bottom-right", label: "Abajo derecha" },
+  { id: "bottom-center", label: "Centro inferior" },
+];
+
+const logoSizes = [
+  { id: "small", label: "Chico" },
+  { id: "medium", label: "Mediano" },
+  { id: "large", label: "Grande" },
+];
+
 function mapModelLabel(modelId: string) {
   return supportedModels.find((model) => model.id === modelId)?.label ?? modelId;
 }
@@ -169,6 +192,20 @@ function isImageAsset(asset: AssetRecord) {
     mimeType.startsWith("image/") ||
     /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(path) ||
     path.includes("firebasestorage.googleapis.com")
+  );
+}
+
+function isLogoAsset(asset: AssetRecord) {
+  const type = asset.type.toLowerCase();
+  const category = asset.category.toLowerCase();
+  const tags = asset.tags.map((tag) => tag.toLowerCase());
+
+  return (
+    isImageAsset(asset) &&
+    (type === "logo" ||
+      category === "logo" ||
+      tags.includes("logo") ||
+      tags.includes("logotipo"))
   );
 }
 
@@ -223,6 +260,11 @@ export default function GeneratorPage() {
   const [requestImageName, setRequestImageName] = useState("");
   const [requestImageRole, setRequestImageRole] = useState("producto-principal");
   const [requestImageNotes, setRequestImageNotes] = useState("");
+
+  const [logoOverlayEnabled, setLogoOverlayEnabled] = useState(false);
+  const [selectedLogoAssetId, setSelectedLogoAssetId] = useState("");
+  const [logoPosition, setLogoPosition] = useState("bottom-right");
+  const [logoSize, setLogoSize] = useState("medium");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -305,6 +347,8 @@ export default function GeneratorPage() {
     setBrandBrain(null);
     setClientAssets([]);
     setSelectedAssetIds([]);
+    setLogoOverlayEnabled(false);
+    setSelectedLogoAssetId("");
     setError("");
 
     if (!clientId) return;
@@ -354,9 +398,14 @@ export default function GeneratorPage() {
       setClientAssets(loadedAssets);
 
       const featuredAssetIds = loadedAssets
-        .filter((asset) => asset.isFeatured)
+        .filter((asset) => asset.isFeatured && !isLogoAsset(asset))
         .map((asset) => asset.id);
       setSelectedAssetIds(featuredAssetIds);
+
+      const firstLogoAsset = loadedAssets.find(isLogoAsset);
+      if (firstLogoAsset) {
+        setSelectedLogoAssetId(firstLogoAsset.id);
+      }
 
       const preferredModels = Array.isArray(clientData.brandBrain?.recommendedModels)
         ? clientData.brandBrain.recommendedModels
@@ -425,12 +474,32 @@ export default function GeneratorPage() {
       return;
     }
 
+    const selectedLogoAsset = clientAssets.find((asset) => asset.id === selectedLogoAssetId);
+
+    if (logoOverlayEnabled && !selectedLogoAsset) {
+      setError("Selecciona un logo oficial o desactiva la opción de logo fijo.");
+      return;
+    }
+
     setIsSaving(true);
 
     try {
       const selectedAssetsSnapshot = clientAssets.filter((asset) =>
         selectedAssetIds.includes(asset.id),
       );
+
+      const logoOverlay: LogoOverlayRecord = logoOverlayEnabled && selectedLogoAsset
+        ? {
+            enabled: true,
+            assetId: selectedLogoAsset.id,
+            assetName: selectedLogoAsset.name,
+            fileUrl: selectedLogoAsset.fileUrl,
+            position: logoPosition,
+            size: logoSize,
+          }
+        : {
+            enabled: false,
+          };
 
       const requestRef = await addDoc(collection(db, "generationRequests"), {
         clientId: selectedClientId,
@@ -455,6 +524,7 @@ export default function GeneratorPage() {
         selectedAssetIds,
         selectedAssetsSnapshot,
         requestAttachments: [],
+        logoOverlay,
         status: requestImageFile ? "saving_assets" : "brief_ready",
         createdBy: user?.uid ?? null,
         createdAt: serverTimestamp(),
@@ -504,6 +574,8 @@ export default function GeneratorPage() {
   const recommendedModels = brandBrain?.recommendedModels ?? [];
   const selectedAssets = clientAssets.filter((asset) => selectedAssetIds.includes(asset.id));
   const selectedImageAssetsCount = selectedAssets.filter(isImageAsset).length;
+  const logoAssets = clientAssets.filter(isLogoAsset);
+  const selectedLogoAsset = logoAssets.find((asset) => asset.id === selectedLogoAssetId);
 
   if (isCheckingSession) {
     return (
@@ -712,8 +784,66 @@ export default function GeneratorPage() {
               />
             </section>
 
+            <section className="space-y-5 border-t border-zinc-200 pt-6">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">5. Logo oficial opcional</p>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  El logo no se genera con IA. Si lo activas, se coloca después como capa fija para evitar deformaciones.
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                <label className="flex cursor-pointer items-start gap-3 text-sm font-semibold text-zinc-900">
+                  <input
+                    type="checkbox"
+                    checked={logoOverlayEnabled}
+                    onChange={(event) => setLogoOverlayEnabled(event.target.checked)}
+                    disabled={logoAssets.length === 0}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <span>
+                    Agregar logo oficial como capa fija
+                    <span className="mt-1 block text-sm font-normal leading-6 text-zinc-600">
+                      {logoAssets.length > 0
+                        ? "Opcional por pieza. Úsalo solo cuando esta publicación deba llevar branding visible."
+                        : "Este cliente no tiene assets marcados como logo. Usa tipo, categoría o tag: logo."}
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              {logoOverlayEnabled && logoAssets.length > 0 ? (
+                <div className="grid gap-5 md:grid-cols-3">
+                  <SelectField
+                    label="Logo oficial"
+                    value={selectedLogoAssetId}
+                    onChange={setSelectedLogoAssetId}
+                    options={logoAssets.map((asset) => ({ id: asset.id, label: asset.name }))}
+                  />
+                  <SelectField label="Posición" value={logoPosition} onChange={setLogoPosition} options={logoPositions} />
+                  <SelectField label="Tamaño" value={logoSize} onChange={setLogoSize} options={logoSizes} />
+                </div>
+              ) : null}
+
+              {logoOverlayEnabled && selectedLogoAsset ? (
+                <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                  <div className="grid gap-4 sm:grid-cols-[96px_1fr] sm:items-center">
+                    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white p-3">
+                      <img src={selectedLogoAsset.fileUrl} alt={selectedLogoAsset.name} className="h-16 w-full object-contain" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-900">{selectedLogoAsset.name}</p>
+                      <p className="mt-1 text-sm leading-6 text-zinc-600">
+                        Se colocará como capa real sobre la imagen final. No se manda como referencia creativa para que la IA no lo altere.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
             <div className="space-y-5 border-t border-zinc-200 pt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">5. Dirección visual</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">6. Dirección visual</p>
               <ChipSelector label="Qué debe transmitir" values={emotions} selectedValues={selectedEmotions} onToggle={(value) => setSelectedEmotions(toggleArrayValue(value, selectedEmotions))} />
               <ChipSelector label="Elementos que deben aparecer" values={visualElements} selectedValues={selectedVisualElements} onToggle={(value) => setSelectedVisualElements(toggleArrayValue(value, selectedVisualElements))} />
               <TextAreaField
@@ -745,7 +875,7 @@ export default function GeneratorPage() {
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Assets del cliente</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">Elegir para este brief</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                Los destacados se preseleccionan, pero puedes agregar o quitar cualquier asset.
+                Los destacados se preseleccionan, pero puedes agregar o quitar cualquier asset. Los logos se manejan aparte como capa fija.
               </p>
 
               {!selectedClient ? (
@@ -757,13 +887,19 @@ export default function GeneratorPage() {
                   {clientAssets.map((asset) => {
                     const selected = selectedAssetIds.includes(asset.id);
                     const imageAsset = isImageAsset(asset);
+                    const logoAsset = isLogoAsset(asset);
 
                     return (
                       <button
                         key={asset.id}
                         type="button"
-                        onClick={() => setSelectedAssetIds(toggleArrayValue(asset.id, selectedAssetIds))}
-                        className={`rounded-3xl border p-4 text-left transition ${selected ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 bg-zinc-50 text-zinc-900 hover:bg-white"}`}
+                        onClick={() => {
+                          if (!logoAsset) {
+                            setSelectedAssetIds(toggleArrayValue(asset.id, selectedAssetIds));
+                          }
+                        }}
+                        disabled={logoAsset}
+                        className={`rounded-3xl border p-4 text-left transition ${selected ? "border-zinc-950 bg-zinc-950 text-white" : "border-zinc-200 bg-zinc-50 text-zinc-900 hover:bg-white"} ${logoAsset ? "cursor-not-allowed opacity-80" : ""}`}
                       >
                         <div className="grid grid-cols-[56px_1fr] items-center gap-3">
                           <div className={`overflow-hidden rounded-2xl border ${selected ? "border-white/20 bg-white/10" : "border-zinc-200 bg-white"}`}>
@@ -781,6 +917,11 @@ export default function GeneratorPage() {
                                   Destacado
                                 </span>
                               ) : null}
+                              {logoAsset ? (
+                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-800">
+                                  Logo fijo
+                                </span>
+                              ) : null}
                             </div>
                             <p className={`mt-1 text-xs ${selected ? "text-zinc-300" : "text-zinc-500"}`}>
                               {asset.type || "asset"} {asset.category ? `· ${asset.category}` : ""}
@@ -790,7 +931,7 @@ export default function GeneratorPage() {
                         </div>
                         <div className="mt-3 flex justify-end">
                           <span className={`rounded-full px-3 py-1 text-xs font-semibold ${selected ? "bg-white text-zinc-950" : "bg-zinc-950 text-white"}`}>
-                            {selected ? "Usar" : "Omitir"}
+                            {logoAsset ? "Se elige en logo" : selected ? "Usar" : "Omitir"}
                           </span>
                         </div>
                       </button>
@@ -803,6 +944,7 @@ export default function GeneratorPage() {
                 <div className="mt-5 rounded-3xl border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
                   <p><span className="font-semibold text-zinc-950">{selectedAssetIds.length}</span> asset(s) seleccionados.</p>
                   <p><span className="font-semibold text-zinc-950">{selectedImageAssetsCount}</span> asset(s) de imagen podrán usarse como referencias visuales reales.</p>
+                  <p><span className="font-semibold text-zinc-950">{logoAssets.length}</span> logo(s) disponibles como capa fija.</p>
                   <p><span className="font-semibold text-zinc-950">{requestImageFile ? 1 : 0}</span> referencia puntual será priorizada en este request.</p>
                 </div>
               ) : null}
