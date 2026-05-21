@@ -26,6 +26,7 @@ type BrandBrainForm = {
 type ClientData = {
   name: string;
   industry: string;
+  status?: string;
   brandBrain?: {
     brandDescription?: string;
     tone?: string;
@@ -39,11 +40,9 @@ type ClientData = {
 };
 
 const availableModels = [
-  { id: "nano-banana", label: "Nano Banana" },
-  { id: "gpt-image", label: "GPT Image" },
-  { id: "firefly", label: "Adobe Firefly" },
-  { id: "ideogram", label: "Ideogram" },
-  { id: "flux", label: "Flux" },
+  { id: "draft-mini-low", label: "Borrador económico · GPT Image Mini" },
+  { id: "nano-banana", label: "Calidad para redes · Nano Banana" },
+  { id: "gpt-image", label: "GPT Image estándar" },
 ];
 
 function joinItems(items?: string[]) {
@@ -72,8 +71,14 @@ export default function ClientBrandBrainPage() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingClient, setIsSavingClient] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
   const [clientName, setClientName] = useState("");
   const [clientIndustry, setClientIndustry] = useState("");
+  const [editableClientName, setEditableClientName] = useState("");
+  const [editableClientIndustry, setEditableClientIndustry] = useState("");
+  const [clientStatus, setClientStatus] = useState("active");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [form, setForm] = useState<BrandBrainForm>({
@@ -116,9 +121,14 @@ export default function ClientBrandBrainPage() {
 
       const data = snapshot.data() as ClientData;
       const brandBrain = data.brandBrain ?? {};
+      const loadedName = data.name || "Cliente sin nombre";
+      const loadedIndustry = data.industry || "";
 
-      setClientName(data.name || "Cliente sin nombre");
-      setClientIndustry(data.industry || "Sin categoría definida");
+      setClientName(loadedName);
+      setClientIndustry(loadedIndustry || "Sin categoría definida");
+      setEditableClientName(loadedName);
+      setEditableClientIndustry(loadedIndustry);
+      setClientStatus(data.status || "active");
       setForm({
         brandDescription: brandBrain.brandDescription ?? "",
         tone: brandBrain.tone ?? "",
@@ -159,6 +169,66 @@ export default function ClientBrandBrainPage() {
           : [...currentForm.recommendedModels, modelId],
       };
     });
+  }
+
+  async function handleSaveClientInfo(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    const cleanName = editableClientName.trim();
+    const cleanIndustry = editableClientIndustry.trim();
+
+    if (!cleanName) {
+      setError("El cliente debe tener nombre.");
+      return;
+    }
+
+    setIsSavingClient(true);
+
+    try {
+      await updateDoc(doc(db, "clients", clientId), {
+        name: cleanName,
+        industry: cleanIndustry,
+        updatedAt: serverTimestamp(),
+      });
+
+      setClientName(cleanName);
+      setClientIndustry(cleanIndustry || "Sin categoría definida");
+      setSuccess("Ficha del cliente actualizada correctamente.");
+    } catch (saveError) {
+      console.error(saveError);
+      setError("No pudimos actualizar la ficha del cliente.");
+    } finally {
+      setIsSavingClient(false);
+    }
+  }
+
+  async function handleArchiveClient() {
+    setError("");
+    setSuccess("");
+
+    if (deleteConfirmation.trim() !== clientName.trim()) {
+      setError(`Para eliminar este cliente, escribe exactamente: ${clientName}`);
+      return;
+    }
+
+    setIsArchiving(true);
+
+    try {
+      await updateDoc(doc(db, "clients", clientId), {
+        status: "deleted",
+        deletedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      router.replace("/dashboard/clientes");
+    } catch (archiveError) {
+      console.error(archiveError);
+      setError("No pudimos eliminar este cliente.");
+    } finally {
+      setIsArchiving(false);
+    }
   }
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
@@ -208,6 +278,8 @@ export default function ClientBrandBrainPage() {
     return Math.round((completed / fields.length) * 100);
   }, [form]);
 
+  const canArchiveClient = deleteConfirmation.trim() === clientName.trim();
+
   if (isCheckingSession || isLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 text-white">
@@ -239,6 +311,11 @@ export default function ClientBrandBrainPage() {
               <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
                 {clientIndustry}. Esta información será el contexto base que leerá BUST IT NOW antes de generar piezas para esta marca.
               </p>
+              {clientStatus !== "active" ? (
+                <p className="mt-3 inline-flex rounded-full bg-red-500 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white">
+                  Cliente inactivo
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-3 lg:items-end">
@@ -380,6 +457,50 @@ export default function ClientBrandBrainPage() {
           <aside className="space-y-6">
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                Ficha del cliente
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+                Editar datos base
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-zinc-600">
+                Estos datos se usan para identificar al cliente dentro del generador.
+              </p>
+
+              <form className="mt-5 space-y-4" onSubmit={handleSaveClientInfo}>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-zinc-800" htmlFor="client-name">
+                    Nombre del cliente
+                  </label>
+                  <input
+                    id="client-name"
+                    value={editableClientName}
+                    onChange={(event) => setEditableClientName(event.target.value)}
+                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-zinc-800" htmlFor="client-industry">
+                    Giro o categoría
+                  </label>
+                  <input
+                    id="client-industry"
+                    value={editableClientIndustry}
+                    onChange={(event) => setEditableClientIndustry(event.target.value)}
+                    className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSavingClient}
+                  className="flex h-12 w-full items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSavingClient ? "Guardando ficha..." : "Guardar ficha"}
+                </button>
+              </form>
+            </section>
+
+            <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
                 Modelos recomendados
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">
@@ -435,6 +556,35 @@ export default function ClientBrandBrainPage() {
                 className="mt-6 flex h-12 w-full items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {isSaving ? "Guardando..." : "Guardar Brand Brain"}
+              </button>
+            </section>
+
+            <section className="rounded-[2rem] border border-red-200 bg-red-50 p-6 shadow-sm sm:p-8">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-red-600">
+                Zona de riesgo
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-red-950">
+                Eliminar cliente
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-red-700">
+                Para evitar errores, esto no borra físicamente la información. El cliente queda marcado como eliminado y deja de aparecer en la operación normal.
+              </p>
+              <p className="mt-4 text-sm font-semibold text-red-950">
+                Escribe exactamente: {clientName}
+              </p>
+              <input
+                value={deleteConfirmation}
+                onChange={(event) => setDeleteConfirmation(event.target.value)}
+                placeholder={clientName}
+                className="mt-3 h-12 w-full rounded-2xl border border-red-200 bg-white px-4 text-base outline-none transition focus:border-red-500"
+              />
+              <button
+                type="button"
+                onClick={handleArchiveClient}
+                disabled={!canArchiveClient || isArchiving}
+                className="mt-4 flex h-12 w-full items-center justify-center rounded-2xl bg-red-600 px-4 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isArchiving ? "Eliminando..." : "Eliminar cliente"}
               </button>
             </section>
           </aside>
