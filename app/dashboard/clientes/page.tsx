@@ -54,16 +54,18 @@ export default function ClientsPage() {
     try {
       const clientsQuery = query(collection(db, "clients"));
       const snapshot = await getDocs(clientsQuery);
-      const loadedClients = snapshot.docs.map((document) => {
-        const data = document.data();
+      const loadedClients = snapshot.docs
+        .map((document) => {
+          const data = document.data();
 
-        return {
-          id: document.id,
-          name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
-          industry: typeof data.industry === "string" ? data.industry : "",
-          status: typeof data.status === "string" ? data.status : "active",
-        } satisfies ClientRecord;
-      });
+          return {
+            id: document.id,
+            name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
+            industry: typeof data.industry === "string" ? data.industry : "",
+            status: typeof data.status === "string" ? data.status : "active",
+          } satisfies ClientRecord;
+        })
+        .filter((client) => client.status !== "deleted");
 
       loadedClients.sort((a, b) => a.name.localeCompare(b.name, "es"));
       setClients(loadedClients);
@@ -138,8 +140,8 @@ export default function ClientsPage() {
   }
 
   const clientCountLabel = useMemo(() => {
-    if (clients.length === 1) return "1 cliente configurado";
-    return `${clients.length} clientes configurados`;
+    if (clients.length === 1) return "1 cliente activo";
+    return `${clients.length} clientes activos`;
   }, [clients.length]);
 
   if (isCheckingSession) {
@@ -270,7 +272,7 @@ export default function ClientsPage() {
               </div>
             ) : clients.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-zinc-300 bg-zinc-50 px-5 py-10 text-center text-sm leading-6 text-zinc-600">
-                Todavía no hay clientes. Crea el primero para empezar a construir su memoria visual.
+                Todavía no hay clientes activos. Crea el primero para empezar a construir su memoria visual.
               </div>
             ) : (
               <div className="grid gap-4">
