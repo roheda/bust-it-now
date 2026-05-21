@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import sharp from "sharp";
 
 export const maxDuration = 300;
 
@@ -10,6 +11,14 @@ const openai = new OpenAI({
 type ReferenceImageInput = {
   url?: string;
   name?: string;
+};
+
+type LogoOverlayInput = {
+  enabled?: boolean;
+  fileUrl?: string;
+  assetName?: string;
+  position?: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "bottom-center";
+  size?: "small" | "medium" | "large";
 };
 
 type SupportedOpenAIImageSize = "1024x1024" | "1024x1536" | "1536x1024";
@@ -124,7 +133,8 @@ async function fetchReferenceImagesForOpenAI(referenceImages: ReferenceImageInpu
       contentType.includes("image/png") ||
       contentType.includes("image/jpeg") ||
       contentType.includes("image/jpg") ||
-      contentType.includes("image/webp");
+      contentType.includes("image/webp") ||
+      contentType.includes("image/svg+xml");
 
     if (!isSupportedImage) {
       console.warn("Skipping unsupported reference image type", contentType);
@@ -182,6 +192,120 @@ async function fetchReferenceImagesForGemini(referenceImages: ReferenceImageInpu
   }
 
   return referenceParts;
+}
+
+async function fetchImageBuffer(url: string) {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error("No pudimos descargar el logo oficial para colocarlo como capa fija.");
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function getLogoTargetWidth(baseWidth: number, size?: string) {
+  switch (size) {
+    case "small":
+      return Math.round(baseWidth * 0.14);
+    case "large":
+      return Math.round(baseWidth * 0.28);
+    case "medium":
+    default:
+      return Math.round(baseWidth * 0.2);
+  }
+}
+
+function getLogoPosition({
+  baseWidth,
+  baseHeight,
+  logoWidth,
+  logoHeight,
+  position,
+}: {
+  baseWidth: number;
+  baseHeight: number;
+  logoWidth: number;
+  logoHeight: number;
+  position?: string;
+}) {
+  const margin = Math.round(Math.min(baseWidth, baseHeight) * 0.055);
+
+  switch (position) {
+    case "top-left":
+      return { left: margin, top: margin };
+    case "top-right":
+      return { left: baseWidth - logoWidth - margin, top: margin };
+    case "bottom-left":
+      return { left: margin, top: baseHeight - logoHeight - margin };
+    case "bottom-center":
+      return {
+        left: Math.round((baseWidth - logoWidth) / 2),
+        top: baseHeight - logoHeight - margin,
+      };
+    case "bottom-right":
+    default:
+      return {
+        left: baseWidth - logoWidth - margin,
+        top: baseHeight - logoHeight - margin,
+      };
+  }
+}
+
+async function applyLogoOverlayToImage(imageBase64: string, logoOverlay?: LogoOverlayInput) {
+  if (!logoOverlay?.enabled || !logoOverlay.fileUrl) {
+    return imageBase64;
+  }
+
+  const baseBuffer = Buffer.from(imageBase64, "base64");
+  const baseMetadata = await sharp(baseBuffer).metadata();
+  const baseWidth = baseMetadata.width || 1024;
+  const baseHeight = baseMetadata.height || 1024;
+
+  const logoBuffer = await fetchImageBuffer(logoOverlay.fileUrl);
+  const targetLogoWidth = getLogoTargetWidth(baseWidth, logoOverlay.size);
+  const resizedLogoBuffer = await sharp(logoBuffer)
+    .resize({ width: targetLogoWidth, withoutEnlargement: true })
+    .png()
+    .toBuffer();
+
+  const logoMetadata = await sharp(resizedLogoBuffer).metadata();
+  const logoWidth = logoMetadata.width || targetLogoWidth;
+  const logoHeight = logoMetadata.height || Math.round(targetLogoWidth * 0.4);
+  const position = getLogoPosition({
+    baseWidth,
+    baseHeight,
+    logoWidth,
+    logoHeight,
+    position: logoOverlay.position,
+  });
+
+  const compositedBuffer = await sharp(baseBuffer)
+    .composite([
+      {
+        input: resizedLogoBuffer,
+        left: position.left,
+        top: position.top,
+      },
+    ])
+    .png()
+    .toBuffer();
+
+  return compositedBuffer.toString("base64");
+}
+
+async function applyLogoOverlayToImages(imagesBase64: string[], logoOverlay?: LogoOverlayInput) {
+  if (!logoOverlay?.enabled || !logoOverlay.fileUrl) {
+    return imagesBase64;
+  }
+
+  const processedImages: string[] = [];
+
+  for (const imageBase64 of imagesBase64) {
+    processedImages.push(await applyLogoOverlayToImage(imageBase64, logoOverlay));
+  }
+
+  return processedImages;
 }
 
 async function generateOpenAIReferenceBasedVariants({
@@ -386,6 +510,9 @@ export async function POST(request: Request) {
     const referenceImages = Array.isArray(body.referenceImages)
       ? (body.referenceImages as ReferenceImageInput[])
       : [];
+    const logoOverlay = body.logoOverlay && typeof body.logoOverlay === "object"
+      ? (body.logoOverlay as LogoOverlayInput)
+      : undefined;
 
     if (!prompt.trim()) {
       return NextResponse.json({ error: "Falta el prompt." }, { status: 400 });
@@ -420,7 +547,13 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(result);
+    const imagesBase64 = await applyLogoOverlayToImages(result.imagesBase64, logoOverlay);
+
+    return NextResponse.json({
+      ...result,
+      imagesBase64,
+      logoOverlayApplied: logoOverlay?.enabled === true,
+    });
   } catch (error) {
     const errorMessage = getErrorMessage(error);
     console.error("generate-image error", error);
