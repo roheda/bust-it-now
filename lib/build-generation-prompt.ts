@@ -39,6 +39,14 @@ export type BuildPromptInput = {
     fileUrl?: string;
     mimeType?: string;
   }>;
+  logoOverlay?: {
+    enabled?: boolean;
+    assetId?: string;
+    assetName?: string;
+    fileUrl?: string;
+    position?: string;
+    size?: string;
+  };
 };
 
 function formatLabel(format?: string) {
@@ -78,6 +86,18 @@ function attachmentRoleLabel(role?: string) {
   return map[role || ""] || role || "specific reference";
 }
 
+function logoPositionLabel(position?: string) {
+  const map: Record<string, string> = {
+    "top-left": "top-left corner",
+    "top-right": "top-right corner",
+    "bottom-left": "bottom-left corner",
+    "bottom-right": "bottom-right corner",
+    "bottom-center": "bottom-center area",
+  };
+
+  return map[position || ""] || "selected clean area";
+}
+
 export function buildGenerationPrompt(data: BuildPromptInput) {
   const requestAttachmentsText =
     data.requestAttachments?.length
@@ -94,6 +114,12 @@ export function buildGenerationPrompt(data: BuildPromptInput) {
           })
           .join("\n")
       : "No specific request attachments.";
+
+  const logoOverlayText = data.logoOverlay?.enabled
+    ? `A real official logo will be overlaid after image generation as a fixed, exact layer. Leave a clean, low-detail space in the ${logoPositionLabel(
+        data.logoOverlay.position,
+      )} for the official logo named ${data.logoOverlay.assetName || "official logo"}. Do not draw, recreate, distort, fake, or reinterpret the logo inside the AI-generated image.`
+    : "No logo overlay requested for this piece. Do not force a logo into the design.";
 
   const assetsText =
     data.selectedAssetsSnapshot?.length
@@ -149,6 +175,9 @@ SPECIFIC ATTACHMENTS FOR THIS PIECE
 These attachments are the most important visual references for this specific generation. If one is a product, dish, or object, it should be treated as the visual protagonist whenever the brief indicates it.
 ${requestAttachmentsText}
 
+OPTIONAL LOGO OVERLAY
+${logoOverlayText}
+
 BRAND BRAIN
 - Brand description: ${
     data.brandBrainSnapshot?.brandDescription || "Not specified"
@@ -177,6 +206,7 @@ ART DIRECTION RULES
 - Create visual depth, deliberate hierarchy, premium finishing, and an intentional composition.
 - Use strong focal points, background treatment, subtle lighting, shadows, and graphic systems that support the message.
 - If a specific product, dish, or object attachment is provided, prioritize it visually and make it feel integrated into the design.
+- If a logo overlay is requested, reserve the requested clean area but do not generate the logo itself.
 - Keep the communication instantly understandable at a glance.
 - Respect the brand style, emotional tone, and commercial objective.
 - Avoid random decorative clutter that does not reinforce the message.
@@ -189,7 +219,7 @@ TEXT RULES
 BRAND SAFETY RULES
 - Do not distort, rewrite, or fabricate brand names.
 - Do not invent a new brand identity that contradicts the Brand Brain.
-- If a logo is shown through a reference image, preserve it as accurately as possible, but avoid relying on logo recreation unless explicitly required.
+- Do not recreate logos inside the generated image. Logos, when requested, are added later as exact fixed overlays.
 - Do not create false product details that are not supported by the brief or attachments.
 
 OUTPUT RULES
