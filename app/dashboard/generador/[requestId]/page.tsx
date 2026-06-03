@@ -4,6 +4,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -12,7 +13,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadString } from "firebase/storage";
+import { deleteObject, getDownloadURL, ref, uploadString } from "firebase/storage";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -122,6 +123,14 @@ function attachmentRoleLabel(role?: string) {
 function buildApprovedAssetName(requestData: RequestData, imageId: string) {
   const clientName = requestData.clientName || "Cliente";
   return `Referencia aprobada - ${clientName} - ${imageId.slice(0, 6)}`;
+}
+
+function openFeedbackForImage(imageId: string) {
+  window.dispatchEvent(
+    new CustomEvent("open-ai-feedback", {
+      detail: { imageId },
+    }),
+  );
 }
 
 export default function GeneratorRequestDetailPage() {
@@ -241,29 +250,29 @@ export default function GeneratorRequestDetailPage() {
     return requestData.selectedAssetsSnapshot.filter(isImageReference);
   }, [requestData]);
 
-const referenceImagesPayload = useMemo(() => {
-  if (!useVisualReferences) return [];
+  const referenceImagesPayload = useMemo(() => {
+    if (!useVisualReferences) return [];
 
-  const selectedLogoAssetId = requestData?.logoOverlay?.assetId;
+    const selectedLogoAssetId = requestData?.logoOverlay?.assetId;
 
-  const assetReferences = visualReferenceAssets
-    .filter((asset) => {
-      if (typeof asset.fileUrl !== "string" || asset.fileUrl.length === 0) return false;
-      if (selectedLogoAssetId && asset.id === selectedLogoAssetId) return false;
-      return true;
-    })
-    .map((asset) => ({
-      url: asset.fileUrl || "",
-      name: asset.name,
-    }));
+    const assetReferences = visualReferenceAssets
+      .filter((asset) => {
+        if (typeof asset.fileUrl !== "string" || asset.fileUrl.length === 0) return false;
+        if (selectedLogoAssetId && asset.id === selectedLogoAssetId) return false;
+        return true;
+      })
+      .map((asset) => ({
+        url: asset.fileUrl || "",
+        name: asset.name,
+      }));
 
-  return [...requestAttachmentReferences, ...assetReferences];
-}, [
-  requestAttachmentReferences,
-  requestData?.logoOverlay?.assetId,
-  useVisualReferences,
-  visualReferenceAssets,
-]);
+    return [...requestAttachmentReferences, ...assetReferences];
+  }, [
+    requestAttachmentReferences,
+    requestData?.logoOverlay?.assetId,
+    useVisualReferences,
+    visualReferenceAssets,
+  ]);
 
   const availableReferenceCount = requestAttachmentReferences.length + visualReferenceAssets.length;
 
@@ -328,14 +337,14 @@ const referenceImagesPayload = useMemo(() => {
         headers: {
           "Content-Type": "application/json",
         },
-       body: JSON.stringify({
-  prompt: promptText,
-  format: requestData.format,
-  model: currentGenerationModel,
-  variantCount,
-  referenceImages: referenceImagesPayload,
-  logoOverlay: requestData.logoOverlay ?? null,
-}),
+        body: JSON.stringify({
+          prompt: promptText,
+          format: requestData.format,
+          model: currentGenerationModel,
+          variantCount,
+          referenceImages: referenceImagesPayload,
+          logoOverlay: requestData.logoOverlay ?? null,
+        }),
       });
 
       const result = await response.json();
@@ -422,72 +431,6 @@ const referenceImagesPayload = useMemo(() => {
     }
   }
 
-  async function handleMarkFinal(image: GeneratedImageRecord) {
-    setError("");
-    setSuccess("");
-    setBusyImageId(image.id);
-
-    try {
-      const updates = generatedImages.map((generatedImage) =>
-        updateDoc(doc(db, "generatedImages", generatedImage.id), {
-          isFinal: generatedImage.id === image.id,
-          updatedAt: serverTimestamp(),
-        }),
-      );
-
-      await Promise.all(updates);
-
-      setGeneratedImages((currentImages) =>
-        currentImages.map((currentImage) => ({
-          ...currentImage,
-          isFinal: currentImage.id === image.id,
-        })),
-      );
-      setSuccess("Imagen marcada como final.");
-    } catch (markError) {
-      console.error(markError);
-      setError("No pudimos marcar esta imagen como final.");
-    } finally {
-      setBusyImageId(null);
-    }
-  }
-
-  async function handleToggleLike(image: GeneratedImageRecord) {
-    setError("");
-    setSuccess("");
-    setBusyImageId(image.id);
-
-    const nextLikedValue = !image.liked;
-
-    try {
-      await updateDoc(doc(db, "generatedImages", image.id), {
-        liked: nextLikedValue,
-        feedback: nextLikedValue ? "positive" : "none",
-        feedbackUpdatedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
-      setGeneratedImages((currentImages) =>
-        currentImages.map((currentImage) =>
-          currentImage.id === image.id
-            ? {
-                ...currentImage,
-                liked: nextLikedValue,
-                feedback: nextLikedValue ? "positive" : "none",
-              }
-            : currentImage,
-        ),
-      );
-
-      setSuccess(nextLikedValue ? "Feedback guardado: esta imagen gustó." : "Like removido.");
-    } catch (feedbackError) {
-      console.error(feedbackError);
-      setError("No pudimos guardar el feedback de esta imagen.");
-    } finally {
-      setBusyImageId(null);
-    }
-  }
-
   async function handleSaveAsClientAsset(image: GeneratedImageRecord) {
     if (!requestData?.clientId) {
       setError("No encontramos el cliente para guardar este asset.");
@@ -543,10 +486,41 @@ const referenceImagesPayload = useMemo(() => {
         ),
       );
 
-      setSuccess("Imagen guardada como asset del cliente y marcada con like.");
+      setSuccess("Imagen guardada como asset del cliente.");
     } catch (assetError) {
       console.error(assetError);
       setError("No pudimos guardar esta imagen como asset del cliente.");
+    } finally {
+      setBusyImageId(null);
+    }
+  }
+
+  async function handleDeleteImage(image: GeneratedImageRecord) {
+    const warning = image.savedAsAsset
+      ? "Esta imagen está guardada como referencia del cliente. ¿Seguro que quieres eliminarla del historial?"
+      : "¿Seguro que quieres eliminar esta imagen del historial?";
+
+    if (!window.confirm(`${warning}\n\nEsta acción no se puede deshacer.`)) return;
+
+    setError("");
+    setSuccess("");
+    setBusyImageId(image.id);
+
+    try {
+      if (image.storagePath) {
+        await deleteObject(ref(storage, image.storagePath)).catch(() => {});
+      }
+
+      await deleteDoc(doc(db, "generatedImages", image.id));
+
+      setGeneratedImages((currentImages) =>
+        currentImages.filter((currentImage) => currentImage.id !== image.id),
+      );
+
+      setSuccess("Imagen eliminada correctamente.");
+    } catch (deleteError) {
+      console.error(deleteError);
+      setError("No pudimos eliminar esta imagen.");
     } finally {
       setBusyImageId(null);
     }
@@ -812,14 +786,11 @@ const referenceImagesPayload = useMemo(() => {
                   {generatedImages.map((image) => (
                     <div key={image.id} className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
                       <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-                        {image.isFinal ? (
-                          <span className="absolute left-3 top-3 rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Final</span>
-                        ) : null}
-                        {image.liked ? (
-                          <span className="absolute right-3 top-3 rounded-full bg-zinc-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">👍 Gustó</span>
+                        {image.feedback === "needs_work" ? (
+                          <span className="absolute right-3 top-3 rounded-full bg-red-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Revisar</span>
                         ) : null}
                         {image.savedAsAsset ? (
-                          <span className="absolute bottom-3 left-3 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Asset</span>
+                          <span className="absolute bottom-3 left-3 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">Referencia</span>
                         ) : null}
                         <img src={image.imageUrl} alt="Imagen generada" className="w-full" />
                       </div>
@@ -833,18 +804,19 @@ const referenceImagesPayload = useMemo(() => {
                             <br />
                             Modo: {image.generationMode || "text-only"}
                             {typeof image.usedReferenceImageCount === "number" ? ` · Referencias usadas: ${image.usedReferenceImageCount}` : ""}
-                            {image.savedAsAsset ? " · Guardada como asset" : ""}
+                            {image.savedAsAsset ? " · Guardada como referencia" : ""}
+                            {image.feedback === "needs_work" ? " · Tiene feedback IA" : ""}
                           </p>
                         </div>
                         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                          <a href={image.imageUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800">Ver archivo</a>
+                          <a href={image.imageUrl} download={`bust-it-now-${image.id}.png`} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800">⬇️ Descargar</a>
                           <button
                             type="button"
-                            onClick={() => handleToggleLike(image)}
+                            onClick={() => openFeedbackForImage(image.id)}
                             disabled={busyImageId === image.id}
-                            className={`inline-flex h-10 items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${image.liked ? "border-zinc-950 bg-zinc-950 text-white hover:bg-zinc-800" : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-100"}`}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-red-200 bg-white px-4 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {image.liked ? "👍 Me gusta" : "👍 Marcar que gustó"}
+                            👎 No me gusta
                           </button>
                           <button
                             type="button"
@@ -852,15 +824,15 @@ const referenceImagesPayload = useMemo(() => {
                             disabled={busyImageId === image.id || image.savedAsAsset}
                             className="inline-flex h-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {image.savedAsAsset ? "Guardada como asset" : "⭐ Guardar como asset"}
+                            {image.savedAsAsset ? "Guardada como referencia" : "⭐ Guardar como referencia"}
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleMarkFinal(image)}
-                            disabled={busyImageId === image.id || image.isFinal}
-                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => handleDeleteImage(image)}
+                            disabled={busyImageId === image.id}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-red-200 bg-white px-4 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {image.isFinal ? "Marcada final" : "Usar como final"}
+                            🗑️ Eliminar
                           </button>
                         </div>
                       </div>
