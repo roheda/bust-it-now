@@ -24,3 +24,9 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Oculta la sección legacy de "Briefs recientes" dentro del generador.
+   El historial completo vive en /dashboard/historial. */
+main > div > header + section:has(+ form) {
+  display: none;
+}
