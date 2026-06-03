@@ -56,11 +56,28 @@ export default function RequestFeedbackWidget() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [pendingImageId, setPendingImageId] = useState("");
   const [selectedImageId, setSelectedImageId] = useState("");
   const [reasons, setReasons] = useState<string[]>([]);
   const [avoidNotes, setAvoidNotes] = useState("");
   const [improveNotes, setImproveNotes] = useState("");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    function handleOpenFeedback(event: Event) {
+      const customEvent = event as CustomEvent<{ imageId?: string }>;
+      const imageId = customEvent.detail?.imageId || "";
+
+      setPendingImageId(imageId);
+      setIsOpen(true);
+    }
+
+    window.addEventListener("open-ai-feedback", handleOpenFeedback);
+
+    return () => {
+      window.removeEventListener("open-ai-feedback", handleOpenFeedback);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -97,12 +114,13 @@ export default function RequestFeedbackWidget() {
 
       setImages(loadedImages);
 
-      if (!selectedImageId && loadedImages.length > 0) {
-        const firstImage = loadedImages[0];
-        setSelectedImageId(firstImage.id);
-        setReasons(firstImage.reasons);
-        setAvoidNotes(firstImage.avoidNotes);
-        setImproveNotes(firstImage.improveNotes);
+      const imageToSelect =
+        loadedImages.find((image) => image.id === pendingImageId) ||
+        loadedImages.find((image) => image.id === selectedImageId) ||
+        loadedImages[0];
+
+      if (imageToSelect) {
+        selectImage(imageToSelect);
       }
     } catch (error) {
       console.error(error);
