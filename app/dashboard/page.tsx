@@ -65,7 +65,7 @@ export default function DashboardPage() {
           </button>
         </header>
 
-        <section className="grid gap-5 md:grid-cols-3">
+        <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           <Link
             href="/dashboard/clientes"
             className="group rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg hover:shadow-zinc-200/70"
@@ -107,23 +107,39 @@ export default function DashboardPage() {
               Abrir módulo →
             </p>
           </Link>
+
+          <Link
+            href="/dashboard/historial"
+            className="group rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg hover:shadow-zinc-200/70"
+          >
+            <div className="mb-6 inline-flex rounded-full bg-zinc-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white">
+              Nuevo
+            </div>
+            <h2 className="text-2xl font-semibold tracking-tight">Historial</h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-600">
+              Revisa últimas generaciones, filtra por cliente y reutiliza briefs.
+            </p>
+            <p className="mt-6 text-sm font-semibold text-zinc-950 transition group-hover:translate-x-1">
+              Ver historial →
+            </p>
+          </Link>
         </section>
 
         <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">
-                Siguiente checkpoint: briefs listos para IA
+                Historial y reutilización de briefs
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-                El generador ya puede seleccionar un cliente, leer su Brand Brain, recuperar assets destacados y guardar una solicitud de generación estructurada. El siguiente paso será conectar ese brief a Nano Banana, GPT Image u otro motor.
+                Ahora puedes revisar las generaciones por orden de último movimiento, filtrar por cliente y crear un nuevo request editado a partir de un brief existente.
               </p>
             </div>
             <Link
-              href="/dashboard/generador"
+              href="/dashboard/historial"
               className="inline-flex h-12 items-center justify-center rounded-2xl bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800"
             >
-              Ir al generador
+              Abrir historial
             </Link>
           </div>
         </section>
