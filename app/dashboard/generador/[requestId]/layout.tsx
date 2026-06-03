@@ -1,3 +1,15 @@
-export default function GeneratorRequestLayout({ children }: { children: React.ReactNode }) {
-  return children;
+import type { ReactNode } from "react";
+import RequestFeedbackWidget from "./RequestFeedbackWidget";
+
+export default function GeneratorRequestLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return (
+    <>
+      {children}
+      <RequestFeedbackWidget />
+    </>
+  );
 }
