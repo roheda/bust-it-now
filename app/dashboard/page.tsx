@@ -124,25 +124,6 @@ export default function DashboardPage() {
             </p>
           </Link>
         </section>
-
-        <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-            <div>
-              <h2 className="text-2xl font-semibold tracking-tight">
-                Historial y reutilización de briefs
-              </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-                Ahora puedes revisar las generaciones por orden de último movimiento, filtrar por cliente y crear un nuevo request editado a partir de un brief existente.
-              </p>
-            </div>
-            <Link
-              href="/dashboard/historial"
-              className="inline-flex h-12 items-center justify-center rounded-2xl bg-zinc-950 px-5 text-sm font-semibold text-white transition hover:bg-zinc-800"
-            >
-              Abrir historial
-            </Link>
-          </div>
-        </section>
       </div>
     </main>
   );
