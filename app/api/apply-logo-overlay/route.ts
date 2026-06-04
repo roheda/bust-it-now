@@ -7,14 +7,21 @@ type LogoOverlayInput = {
   enabled?: boolean;
   fileUrl?: string;
   assetName?: string;
-  position?: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "bottom-center";
-  size?: "small" | "medium" | "large";
+  xPercent?: number;
+  yPercent?: number;
+  widthPercent?: number;
 };
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Error desconocido al aplicar logo.";
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 async function fetchImageBuffer(url: string, label: string) {
@@ -25,54 +32,6 @@ async function fetchImageBuffer(url: string, label: string) {
   }
 
   return Buffer.from(await response.arrayBuffer());
-}
-
-function getLogoTargetWidth(baseWidth: number, size?: string) {
-  switch (size) {
-    case "small":
-      return Math.round(baseWidth * 0.14);
-    case "large":
-      return Math.round(baseWidth * 0.28);
-    case "medium":
-    default:
-      return Math.round(baseWidth * 0.2);
-  }
-}
-
-function getLogoPosition({
-  baseWidth,
-  baseHeight,
-  logoWidth,
-  logoHeight,
-  position,
-}: {
-  baseWidth: number;
-  baseHeight: number;
-  logoWidth: number;
-  logoHeight: number;
-  position?: string;
-}) {
-  const margin = Math.round(Math.min(baseWidth, baseHeight) * 0.055);
-
-  switch (position) {
-    case "top-left":
-      return { left: margin, top: margin };
-    case "top-right":
-      return { left: baseWidth - logoWidth - margin, top: margin };
-    case "bottom-left":
-      return { left: margin, top: baseHeight - logoHeight - margin };
-    case "bottom-center":
-      return {
-        left: Math.round((baseWidth - logoWidth) / 2),
-        top: baseHeight - logoHeight - margin,
-      };
-    case "bottom-right":
-    default:
-      return {
-        left: baseWidth - logoWidth - margin,
-        top: baseHeight - logoHeight - margin,
-      };
-  }
 }
 
 async function makeLogoBackgroundTransparent(logoBuffer: Buffer) {
@@ -108,7 +67,7 @@ async function makeLogoBackgroundTransparent(logoBuffer: Buffer) {
 
 async function applyLogoOverlayToImage(imageUrl: string, logoOverlay: LogoOverlayInput) {
   if (!logoOverlay.enabled || !logoOverlay.fileUrl) {
-    throw new Error("Este request no tiene logo configurado para overlay.");
+    throw new Error("Selecciona un logo para aplicar sobre la imagen.");
   }
 
   const baseBuffer = await fetchImageBuffer(imageUrl, "la imagen generada");
@@ -118,7 +77,10 @@ async function applyLogoOverlayToImage(imageUrl: string, logoOverlay: LogoOverla
 
   const logoBuffer = await fetchImageBuffer(logoOverlay.fileUrl, "el logo oficial");
   const transparentLogoBuffer = await makeLogoBackgroundTransparent(logoBuffer);
-  const targetLogoWidth = getLogoTargetWidth(baseWidth, logoOverlay.size);
+  const widthPercent = clampNumber(logoOverlay.widthPercent, 6, 60, 20);
+  const xPercent = clampNumber(logoOverlay.xPercent, 0, 100, 50);
+  const yPercent = clampNumber(logoOverlay.yPercent, 0, 100, 88);
+  const targetLogoWidth = Math.round(baseWidth * (widthPercent / 100));
   const resizedLogoBuffer = await sharp(transparentLogoBuffer)
     .resize({ width: targetLogoWidth, withoutEnlargement: true })
     .png()
@@ -127,16 +89,14 @@ async function applyLogoOverlayToImage(imageUrl: string, logoOverlay: LogoOverla
   const logoMetadata = await sharp(resizedLogoBuffer).metadata();
   const logoWidth = logoMetadata.width || targetLogoWidth;
   const logoHeight = logoMetadata.height || Math.round(targetLogoWidth * 0.4);
-  const position = getLogoPosition({
-    baseWidth,
-    baseHeight,
-    logoWidth,
-    logoHeight,
-    position: logoOverlay.position,
-  });
+
+  const centerX = Math.round(baseWidth * (xPercent / 100));
+  const centerY = Math.round(baseHeight * (yPercent / 100));
+  const left = Math.min(baseWidth - logoWidth, Math.max(0, centerX - Math.round(logoWidth / 2)));
+  const top = Math.min(baseHeight - logoHeight, Math.max(0, centerY - Math.round(logoHeight / 2)));
 
   const compositedBuffer = await sharp(baseBuffer)
-    .composite([{ input: resizedLogoBuffer, left: position.left, top: position.top }])
+    .composite([{ input: resizedLogoBuffer, left, top }])
     .png()
     .toBuffer();
 
@@ -156,7 +116,7 @@ export async function POST(request: Request) {
     }
 
     if (!logoOverlay?.enabled || !logoOverlay.fileUrl) {
-      return NextResponse.json({ error: "No hay logo configurado para aplicar." }, { status: 400 });
+      return NextResponse.json({ error: "Selecciona un logo para aplicar." }, { status: 400 });
     }
 
     const imageBase64 = await applyLogoOverlayToImage(imageUrl, logoOverlay);
