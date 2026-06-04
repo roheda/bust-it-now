@@ -15,12 +15,15 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { auth, db, storage } from "@/lib/firebase";
 
-type LogoOverlay = {
-  enabled?: boolean;
-  fileUrl?: string;
-  assetName?: string;
-  position?: string;
-  size?: string;
+type AssetRecord = {
+  id: string;
+  name: string;
+  type: string;
+  category: string;
+  tags: string[];
+  fileUrl: string;
+  storagePath?: string;
+  mimeType?: string;
 };
 
 type GeneratedImage = {
@@ -33,7 +36,6 @@ type GeneratedImage = {
 type RequestInfo = {
   clientId?: string;
   clientName?: string;
-  logoOverlay?: LogoOverlay;
 };
 
 function getRequestIdFromPath(pathname: string | null) {
@@ -48,26 +50,30 @@ function getRequestIdFromPath(pathname: string | null) {
   return requestId;
 }
 
-function logoPositionLabel(position?: string) {
-  const map: Record<string, string> = {
-    "top-left": "superior izquierda",
-    "top-right": "superior derecha",
-    "bottom-left": "inferior izquierda",
-    "bottom-right": "inferior derecha",
-    "bottom-center": "inferior centro",
-  };
+function isImageAsset(asset: AssetRecord) {
+  const mimeType = asset.mimeType || "";
+  const path = `${asset.fileUrl || ""} ${asset.storagePath || ""}`.toLowerCase();
 
-  return map[position || ""] || "posición seleccionada";
+  return (
+    Boolean(asset.fileUrl) &&
+    (mimeType.startsWith("image/") ||
+      /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(path) ||
+      path.includes("firebasestorage.googleapis.com"))
+  );
 }
 
-function logoSizeLabel(size?: string) {
-  const map: Record<string, string> = {
-    small: "chico",
-    medium: "mediano",
-    large: "grande",
-  };
+function isLogoAsset(asset: AssetRecord) {
+  const type = (asset.type || "").toLowerCase();
+  const category = (asset.category || "").toLowerCase();
+  const tags = (asset.tags || []).map((tag) => tag.toLowerCase());
 
-  return map[size || ""] || "mediano";
+  return (
+    isImageAsset(asset) &&
+    (type === "logo" ||
+      category === "logo" ||
+      tags.includes("logo") ||
+      tags.includes("logotipo"))
+  );
 }
 
 export default function LogoOverlayGlobalWidget() {
@@ -80,7 +86,12 @@ export default function LogoOverlayGlobalWidget() {
   const [message, setMessage] = useState("");
   const [requestInfo, setRequestInfo] = useState<RequestInfo | null>(null);
   const [images, setImages] = useState<GeneratedImage[]>([]);
+  const [logoAssets, setLogoAssets] = useState<AssetRecord[]>([]);
   const [selectedImageId, setSelectedImageId] = useState("");
+  const [selectedLogoAssetId, setSelectedLogoAssetId] = useState("");
+  const [xPercent, setXPercent] = useState(50);
+  const [yPercent, setYPercent] = useState(88);
+  const [widthPercent, setWidthPercent] = useState(20);
 
   useEffect(() => {
     setIsOpen(false);
@@ -128,9 +139,41 @@ export default function LogoOverlayGlobalWidget() {
         const exists = loadedImages.some((image) => image.id === currentImageId);
         return exists ? currentImageId : loadedImages[0]?.id || "";
       });
+
+      if (requestData?.clientId) {
+        const assetsSnapshot = await getDocs(
+          query(collection(db, "clientAssets"), where("clientId", "==", requestData.clientId)),
+        );
+
+        const loadedLogoAssets = assetsSnapshot.docs
+          .map((assetDocument) => {
+            const data = assetDocument.data();
+
+            return {
+              id: assetDocument.id,
+              name: typeof data.name === "string" ? data.name : "Logo sin nombre",
+              type: typeof data.type === "string" ? data.type : "",
+              category: typeof data.category === "string" ? data.category : "",
+              tags: Array.isArray(data.tags) ? data.tags : [],
+              fileUrl: typeof data.fileUrl === "string" ? data.fileUrl : "",
+              storagePath: typeof data.storagePath === "string" ? data.storagePath : "",
+              mimeType: typeof data.mimeType === "string" ? data.mimeType : "",
+            } satisfies AssetRecord;
+          })
+          .filter(isLogoAsset);
+
+        setLogoAssets(loadedLogoAssets);
+        setSelectedLogoAssetId((currentLogoId) => {
+          const exists = loadedLogoAssets.some((asset) => asset.id === currentLogoId);
+          return exists ? currentLogoId : loadedLogoAssets[0]?.id || "";
+        });
+      } else {
+        setLogoAssets([]);
+        setSelectedLogoAssetId("");
+      }
     } catch (error) {
       console.error(error);
-      setMessage("No pudimos cargar imágenes o configuración del logo.");
+      setMessage("No pudimos cargar imágenes o logos del cliente.");
     } finally {
       setIsLoading(false);
     }
@@ -138,15 +181,15 @@ export default function LogoOverlayGlobalWidget() {
 
   async function handleApplyLogo() {
     const selectedImage = images.find((image) => image.id === selectedImageId);
-    const logoOverlay = requestInfo?.logoOverlay;
+    const selectedLogo = logoAssets.find((asset) => asset.id === selectedLogoAssetId);
 
     if (!selectedImage) {
       setMessage("Selecciona una imagen.");
       return;
     }
 
-    if (!logoOverlay?.enabled || !logoOverlay.fileUrl) {
-      setMessage("Este request no tiene logo configurado. Reusa/edita el brief y activa el logo post-generación.");
+    if (!selectedLogo) {
+      setMessage("Selecciona un logo de los assets del cliente.");
       return;
     }
 
@@ -154,6 +197,16 @@ export default function LogoOverlayGlobalWidget() {
     setMessage("");
 
     try {
+      const logoOverlay = {
+        enabled: true,
+        fileUrl: selectedLogo.fileUrl,
+        assetId: selectedLogo.id,
+        assetName: selectedLogo.name,
+        xPercent,
+        yPercent,
+        widthPercent,
+      };
+
       const response = await fetch("/api/apply-logo-overlay", {
         method: "POST",
         headers: {
@@ -212,8 +265,8 @@ export default function LogoOverlayGlobalWidget() {
     }
   }
 
-  const logoOverlay = requestInfo?.logoOverlay;
   const selectedImage = images.find((image) => image.id === selectedImageId);
+  const selectedLogo = logoAssets.find((asset) => asset.id === selectedLogoAssetId);
 
   return (
     <>
@@ -222,7 +275,7 @@ export default function LogoOverlayGlobalWidget() {
         onClick={() => setIsOpen(true)}
         className="fixed bottom-24 right-6 z-[60] rounded-full bg-zinc-950 px-5 py-3 text-sm font-semibold text-white shadow-xl transition hover:bg-zinc-800"
       >
-        🏷️ Logo post-generación
+        🏷️ Editor de logo
       </button>
 
       {isOpen ? (
@@ -234,18 +287,18 @@ export default function LogoOverlayGlobalWidget() {
             className="absolute inset-0 cursor-default"
           />
 
-          <aside className="relative flex h-full w-full max-w-xl flex-col bg-white shadow-2xl">
+          <aside className="relative flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl">
             <header className="bg-zinc-950 px-6 py-5 text-white">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">
-                    Capa fija posterior
+                    Logo post-generación
                   </p>
                   <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                    Aplicar logo real
+                    Editor simple de logo
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-zinc-300">
-                    El logo se coloca después de generar la imagen para evitar deformaciones.
+                    Escoge un logo del cliente y ajusta X, Y y tamaño antes de aplicarlo.
                   </p>
                 </div>
 
@@ -262,106 +315,169 @@ export default function LogoOverlayGlobalWidget() {
             <div className="flex-1 overflow-y-auto px-6 py-6">
               {isLoading ? (
                 <p className="rounded-2xl bg-zinc-50 px-4 py-4 text-sm text-zinc-600">
-                  Cargando configuración...
+                  Cargando editor...
                 </p>
               ) : (
                 <div className="space-y-5">
-                  <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
-                    <p className="text-sm font-semibold text-zinc-900">
-                      Configuración del logo
-                    </p>
-                    {logoOverlay?.enabled && logoOverlay.fileUrl ? (
-                      <div className="mt-3 grid grid-cols-[88px_1fr] items-center gap-4">
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-2">
-                          <img
-                            src={logoOverlay.fileUrl}
-                            alt={logoOverlay.assetName || "Logo"}
-                            className="h-16 w-full object-contain"
-                          />
-                        </div>
-                        <div className="text-sm leading-6 text-zinc-600">
-                          <p className="font-semibold text-zinc-900">
-                            {logoOverlay.assetName || "Logo seleccionado"}
-                          </p>
-                          <p>Posición: {logoPositionLabel(logoOverlay.position)}</p>
-                          <p>Tamaño: {logoSizeLabel(logoOverlay.size)}</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-sm leading-6 text-zinc-600">
-                        Este request no tiene logo activo. Reusa/edita el brief, activa el logo post-generación y selecciona el asset del logo.
-                      </p>
-                    )}
-                  </div>
-
                   {images.length === 0 ? (
                     <p className="rounded-2xl bg-zinc-50 px-4 py-4 text-sm text-zinc-600">
                       Este request todavía no tiene imágenes generadas.
                     </p>
-                  ) : (
-                    <>
+                  ) : null}
+
+                  {logoAssets.length === 0 ? (
+                    <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-800">
+                      Este cliente no tiene assets en categoría, tipo o tag <strong>logo</strong>. Agrega el logo en assets del cliente y vuelve a abrir este editor.
+                    </p>
+                  ) : null}
+
+                  {images.length > 0 ? (
+                    <div>
+                      <p className="mb-3 text-sm font-semibold text-zinc-900">
+                        1. Selecciona la imagen
+                      </p>
+                      <div className="grid grid-cols-4 gap-3">
+                        {images.map((image) => (
+                          <button
+                            key={image.id}
+                            type="button"
+                            onClick={() => setSelectedImageId(image.id)}
+                            className={`overflow-hidden rounded-2xl border bg-zinc-50 p-1 ${
+                              selectedImageId === image.id
+                                ? "border-zinc-950"
+                                : "border-zinc-200"
+                            }`}
+                          >
+                            <img
+                              src={image.imageUrl}
+                              alt="Imagen generada"
+                              className="aspect-square w-full rounded-xl object-cover"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {logoAssets.length > 0 ? (
+                    <div>
+                      <p className="mb-3 text-sm font-semibold text-zinc-900">
+                        2. Selecciona el logo
+                      </p>
+                      <div className="grid grid-cols-3 gap-3">
+                        {logoAssets.map((asset) => (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            onClick={() => setSelectedLogoAssetId(asset.id)}
+                            className={`rounded-2xl border bg-white p-3 text-left transition ${
+                              selectedLogoAssetId === asset.id
+                                ? "border-zinc-950"
+                                : "border-zinc-200 hover:bg-zinc-50"
+                            }`}
+                          >
+                            <div className="flex h-16 items-center justify-center rounded-xl bg-zinc-50 p-2">
+                              <img src={asset.fileUrl} alt={asset.name} className="max-h-full max-w-full object-contain" />
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-xs font-semibold text-zinc-800">
+                              {asset.name}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {selectedImage && selectedLogo ? (
+                    <div className="grid gap-5 lg:grid-cols-[1fr_260px]">
                       <div>
                         <p className="mb-3 text-sm font-semibold text-zinc-900">
-                          Selecciona la imagen
+                          3. Ajusta sobre la imagen
                         </p>
-                        <div className="grid grid-cols-3 gap-3">
-                          {images.map((image) => (
-                            <button
-                              key={image.id}
-                              type="button"
-                              onClick={() => setSelectedImageId(image.id)}
-                              className={`overflow-hidden rounded-2xl border bg-zinc-50 p-1 ${
-                                selectedImageId === image.id
-                                  ? "border-zinc-950"
-                                  : "border-zinc-200"
-                              }`}
-                            >
-                              <img
-                                src={image.imageUrl}
-                                alt="Imagen generada"
-                                className="aspect-square w-full rounded-xl object-cover"
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {selectedImage ? (
-                        <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-semibold text-zinc-950">
-                              Vista previa seleccionada
-                            </p>
-                            {selectedImage.logoOverlayApplied ? (
-                              <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white">
-                                Logo aplicado
-                              </span>
-                            ) : null}
-                          </div>
+                        <div className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-zinc-100">
                           <img
                             src={selectedImage.imageUrl}
                             alt="Imagen seleccionada"
-                            className="mt-3 w-full rounded-2xl border border-zinc-200 bg-white"
+                            className="w-full select-none"
+                          />
+                          <img
+                            src={selectedLogo.fileUrl}
+                            alt="Logo preview"
+                            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 object-contain drop-shadow-md"
+                            style={{
+                              left: `${xPercent}%`,
+                              top: `${yPercent}%`,
+                              width: `${widthPercent}%`,
+                            }}
                           />
                         </div>
-                      ) : null}
+                      </div>
 
-                      {message ? (
-                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm leading-6 text-zinc-700">
-                          {message}
+                      <div className="space-y-4 rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                        <p className="text-sm font-semibold text-zinc-900">
+                          Plano X / Y / Size
+                        </p>
+
+                        <label className="block text-sm font-medium text-zinc-800">
+                          X: {xPercent}%
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={xPercent}
+                            onChange={(event) => setXPercent(Number(event.target.value))}
+                            className="mt-2 w-full"
+                          />
+                        </label>
+
+                        <label className="block text-sm font-medium text-zinc-800">
+                          Y: {yPercent}%
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={yPercent}
+                            onChange={(event) => setYPercent(Number(event.target.value))}
+                            className="mt-2 w-full"
+                          />
+                        </label>
+
+                        <label className="block text-sm font-medium text-zinc-800">
+                          Tamaño: {widthPercent}%
+                          <input
+                            type="range"
+                            min="6"
+                            max="60"
+                            value={widthPercent}
+                            onChange={(event) => setWidthPercent(Number(event.target.value))}
+                            className="mt-2 w-full"
+                          />
+                        </label>
+
+                        <div className="grid grid-cols-2 gap-2 pt-2">
+                          <button type="button" onClick={() => { setXPercent(50); setYPercent(88); setWidthPercent(20); }} className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100">Inferior centro</button>
+                          <button type="button" onClick={() => { setXPercent(14); setYPercent(10); setWidthPercent(18); }} className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100">Arriba izq.</button>
+                          <button type="button" onClick={() => { setXPercent(86); setYPercent(10); setWidthPercent(18); }} className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100">Arriba der.</button>
+                          <button type="button" onClick={() => { setXPercent(86); setYPercent(90); setWidthPercent(18); }} className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100">Abajo der.</button>
                         </div>
-                      ) : null}
+                      </div>
+                    </div>
+                  ) : null}
 
-                      <button
-                        type="button"
-                        onClick={handleApplyLogo}
-                        disabled={isApplying || !logoOverlay?.enabled || !logoOverlay.fileUrl}
-                        className="flex h-12 w-full items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        {isApplying ? "Aplicando logo..." : "🏷️ Aplicar logo a esta imagen"}
-                      </button>
-                    </>
-                  )}
+                  {message ? (
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm leading-6 text-zinc-700">
+                      {message}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={handleApplyLogo}
+                    disabled={isApplying || !selectedImage || !selectedLogo}
+                    className="flex h-12 w-full items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {isApplying ? "Aplicando logo..." : "🏷️ Aplicar logo con esta posición"}
+                  </button>
                 </div>
               )}
             </div>
