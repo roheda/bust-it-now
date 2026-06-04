@@ -34,37 +34,6 @@ async function fetchImageBuffer(url: string, label: string) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function makeLogoBackgroundTransparent(logoBuffer: Buffer) {
-  const normalizedLogo = sharp(logoBuffer).ensureAlpha().png();
-  const metadata = await normalizedLogo.metadata();
-  const width = metadata.width || 1;
-  const height = metadata.height || 1;
-  const rawBuffer = await normalizedLogo.raw().toBuffer();
-
-  for (let index = 0; index < rawBuffer.length; index += 4) {
-    const red = rawBuffer[index];
-    const green = rawBuffer[index + 1];
-    const blue = rawBuffer[index + 2];
-    const alpha = rawBuffer[index + 3];
-    const isNearWhite = red >= 245 && green >= 245 && blue >= 245;
-    const isVeryLight = red >= 238 && green >= 238 && blue >= 238;
-
-    if (alpha > 0 && (isNearWhite || isVeryLight)) {
-      rawBuffer[index + 3] = 0;
-    }
-  }
-
-  return sharp(rawBuffer, {
-    raw: {
-      width,
-      height,
-      channels: 4,
-    },
-  })
-    .png()
-    .toBuffer();
-}
-
 async function applyLogoOverlayToImage(imageUrl: string, logoOverlay: LogoOverlayInput) {
   if (!logoOverlay.enabled || !logoOverlay.fileUrl) {
     throw new Error("Selecciona un logo para aplicar sobre la imagen.");
@@ -76,12 +45,13 @@ async function applyLogoOverlayToImage(imageUrl: string, logoOverlay: LogoOverla
   const baseHeight = baseMetadata.height || 1024;
 
   const logoBuffer = await fetchImageBuffer(logoOverlay.fileUrl, "el logo oficial");
-  const transparentLogoBuffer = await makeLogoBackgroundTransparent(logoBuffer);
   const widthPercent = clampNumber(logoOverlay.widthPercent, 6, 60, 20);
   const xPercent = clampNumber(logoOverlay.xPercent, 0, 100, 50);
   const yPercent = clampNumber(logoOverlay.yPercent, 0, 100, 88);
   const targetLogoWidth = Math.round(baseWidth * (widthPercent / 100));
-  const resizedLogoBuffer = await sharp(transparentLogoBuffer)
+
+  const resizedLogoBuffer = await sharp(logoBuffer)
+    .ensureAlpha()
     .resize({ width: targetLogoWidth, withoutEnlargement: true })
     .png()
     .toBuffer();
