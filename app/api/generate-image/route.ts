@@ -430,6 +430,37 @@ async function generateWithOpenAI({
   };
 }
 
+function buildGeminiPrompt(prompt: string) {
+  const trimmedPrompt = prompt.trim();
+  const maxPromptLength = 12000;
+  const safePrompt = trimmedPrompt.length > maxPromptLength
+    ? trimmedPrompt.slice(0, maxPromptLength)
+    : trimmedPrompt;
+
+  return `Generate exactly one finished commercial social media image.
+Do not answer with text only.
+Do not describe the image.
+Return an actual generated image as the primary response.
+Follow this creative brief:
+
+${safePrompt}`;
+}
+
+function extractGeminiText(parts: unknown[]) {
+  return parts
+    .map((part) => {
+      if (part && typeof part === "object" && "text" in part) {
+        const text = (part as { text?: unknown }).text;
+        return typeof text === "string" ? text : "";
+      }
+
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 async function generateOneGeminiImage({
   prompt,
   model,
@@ -459,11 +490,11 @@ async function generateOneGeminiImage({
         contents: [
           {
             role: "user",
-            parts: [{ text: prompt }, ...referenceParts],
+            parts: [{ text: buildGeminiPrompt(prompt) }, ...referenceParts],
           },
         ],
         generationConfig: {
-          responseModalities: ["IMAGE"],
+          responseModalities: ["TEXT", "IMAGE"],
           imageConfig: {
             aspectRatio,
             imageSize: "2K",
@@ -479,25 +510,39 @@ async function generateOneGeminiImage({
     const message =
       typeof payload?.error?.message === "string"
         ? payload.error.message
-        : "Gemini no pudo generar la imagen.";
+        : `Gemini no pudo generar la imagen con ${model}.`;
     throw new Error(message);
   }
 
   const parts = payload?.candidates?.[0]?.content?.parts;
-  const imagePart = Array.isArray(parts)
-    ? parts.find((part) => part?.inlineData?.data || part?.inline_data?.data)
-    : null;
-
+  const normalizedParts = Array.isArray(parts) ? parts : [];
+  const imagePart = normalizedParts.find((part) => part?.inlineData?.data || part?.inline_data?.data);
   const imageBase64 = imagePart?.inlineData?.data || imagePart?.inline_data?.data;
 
   if (typeof imageBase64 !== "string" || imageBase64.length === 0) {
-    throw new Error("Gemini respondió, pero no devolvió una imagen utilizable.");
+    const responseText = extractGeminiText(normalizedParts);
+    const finishReason = payload?.candidates?.[0]?.finishReason;
+    const shortResponseText = responseText ? ` Respuesta textual: ${responseText.slice(0, 240)}` : "";
+    const finishReasonText = typeof finishReason === "string" ? ` Motivo: ${finishReason}.` : "";
+
+    throw new Error(
+      `Nano Banana respondió sin imagen utilizable con ${model}.${finishReasonText}${shortResponseText}`,
+    );
   }
 
   return imageBase64;
 }
 
-async function generateWithNanoBananaPro({
+function getGeminiImageModelCandidates() {
+  return [
+    process.env.GEMINI_IMAGE_MODEL,
+    "gemini-2.5-flash-image",
+    "gemini-2.5-flash-image-preview",
+    "gemini-3-pro-image-preview",
+  ].filter((model): model is string => Boolean(model));
+}
+
+async function generateWithNanoBanana({
   prompt,
   format,
   variantCount,
@@ -511,22 +556,42 @@ async function generateWithNanoBananaPro({
   const referenceParts = await fetchReferenceImagesForGemini(referenceImages);
   const aspectRatio = mapGeminiAspectRatio(format);
   const imagesBase64: string[] = [];
-  const geminiModel = "gemini-3-pro-image-preview";
+  const geminiModels = getGeminiImageModelCandidates();
+  let executedModel = geminiModels[0] || "gemini-image";
+  let lastError: unknown = null;
 
   for (let index = 0; index < variantCount; index += 1) {
-    const imageBase64 = await generateOneGeminiImage({
-      prompt,
-      model: geminiModel,
-      aspectRatio,
-      referenceParts,
-    });
+    let generatedImage = "";
 
-    imagesBase64.push(imageBase64);
+    for (const geminiModel of geminiModels) {
+      try {
+        generatedImage = await generateOneGeminiImage({
+          prompt,
+          model: geminiModel,
+          aspectRatio,
+          referenceParts,
+        });
+        executedModel = geminiModel;
+        break;
+      } catch (error) {
+        lastError = error;
+        console.warn(`Gemini image model failed: ${geminiModel}`, error);
+      }
+    }
+
+    if (!generatedImage) {
+      throw new Error(
+        getErrorMessage(lastError) ||
+          "Nano Banana no devolvió imagen. Intenta con GPT Image estándar o revisa GEMINI_IMAGE_MODEL.",
+      );
+    }
+
+    imagesBase64.push(generatedImage);
   }
 
   return {
     imagesBase64,
-    executedModel: geminiModel,
+    executedModel,
     generationMode: referenceParts.length > 0 ? "visual-references" : "text-only",
     usedReferenceImageCount: referenceParts.length,
   };
@@ -551,7 +616,7 @@ export async function POST(request: Request) {
     }
 
     const result = selectedModel === "nano-banana"
-      ? await generateWithNanoBananaPro({ prompt, format, variantCount, referenceImages })
+      ? await generateWithNanoBanana({ prompt, format, variantCount, referenceImages })
       : selectedModel === "draft-mini-low"
         ? await generateWithOpenAI({
             prompt,
