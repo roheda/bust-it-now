@@ -79,21 +79,36 @@ const variantOptions = [
 
 const generationModelOptions = [
   {
-    id: "draft-mini-low",
-    label: "Borrador económico · GPT Image Mini",
+    id: "gemini-3-pro-image",
+    label: "Gemini Pro Imagen · profesional · aprox $2.50 MXN/img",
   },
   {
-    id: "nano-banana",
-    label: "Calidad para redes · Nano Banana",
+    id: "gemini-3.1-flash-image",
+    label: "Gemini 3.1 Flash Imagen · balanceado · aprox $1.90 MXN/img",
   },
   {
-    id: "gpt-image",
-    label: "GPT Image estándar",
+    id: "gemini-2.5-flash-image",
+    label: "Gemini 2.5 Flash Imagen · rápido · aprox $1.20 MXN/img",
   },
 ];
 
+function normalizeGenerationModel(model?: string) {
+  switch (model) {
+    case "gemini-3-pro-image":
+    case "gemini-3.1-flash-image":
+    case "gemini-2.5-flash-image":
+      return model;
+    case "draft-mini-low":
+    case "nano-banana":
+    case "gpt-image":
+    default:
+      return "gemini-3-pro-image";
+  }
+}
+
 function mapGenerationModelLabel(modelId: string) {
-  return generationModelOptions.find((model) => model.id === modelId)?.label ?? modelId;
+  const normalizedModelId = normalizeGenerationModel(modelId);
+  return generationModelOptions.find((model) => model.id === normalizedModelId)?.label ?? normalizedModelId;
 }
 
 function isImageReference(item: { fileUrl?: string; storagePath?: string; mimeType?: string }) {
@@ -148,7 +163,7 @@ export default function GeneratorRequestDetailPage() {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImageRecord[]>([]);
   const [variantCount, setVariantCount] = useState(1);
   const [useVisualReferences, setUseVisualReferences] = useState(true);
-  const [generationModel, setGenerationModel] = useState("draft-mini-low");
+  const [generationModel, setGenerationModel] = useState("gemini-3-pro-image");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -279,21 +294,22 @@ export default function GeneratorRequestDetailPage() {
   useEffect(() => {
     if (!requestData) return;
 
-    setGenerationModel(requestData.selectedModel || "draft-mini-low");
+    setGenerationModel(normalizeGenerationModel(requestData.selectedModel));
   }, [requestData]);
 
   async function handleChangeGenerationModel(nextModel: string) {
     if (!requestData) return;
 
-    const nextModelLabel = mapGenerationModelLabel(nextModel);
+    const normalizedNextModel = normalizeGenerationModel(nextModel);
+    const nextModelLabel = mapGenerationModelLabel(normalizedNextModel);
 
-    setGenerationModel(nextModel);
+    setGenerationModel(normalizedNextModel);
     setError("");
     setSuccess("");
 
     try {
       await updateDoc(doc(db, "generationRequests", requestId), {
-        selectedModel: nextModel,
+        selectedModel: normalizedNextModel,
         selectedModelLabel: nextModelLabel,
         updatedAt: serverTimestamp(),
       });
@@ -302,7 +318,7 @@ export default function GeneratorRequestDetailPage() {
         currentRequest
           ? {
               ...currentRequest,
-              selectedModel: nextModel,
+              selectedModel: normalizedNextModel,
               selectedModelLabel: nextModelLabel,
             }
           : currentRequest,
@@ -318,7 +334,7 @@ export default function GeneratorRequestDetailPage() {
   async function handleGenerateImage() {
     if (!requestData) return;
 
-    const currentGenerationModel = generationModel || requestData.selectedModel || "draft-mini-low";
+    const currentGenerationModel = normalizeGenerationModel(generationModel || requestData.selectedModel);
 
     setError("");
     setSuccess("");
@@ -593,7 +609,7 @@ export default function GeneratorRequestDetailPage() {
               </div>
               <div className="rounded-2xl bg-zinc-50 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Modelo actual</p>
-                <p className="mt-2 text-base font-medium text-zinc-900">{requestData.selectedModelLabel || requestData.selectedModel || "-"}</p>
+                <p className="mt-2 text-base font-medium text-zinc-900">{mapGenerationModelLabel(requestData.selectedModel || generationModel)}</p>
               </div>
             </div>
 
@@ -659,7 +675,7 @@ export default function GeneratorRequestDetailPage() {
                   ))}
                 </select>
                 <p className="text-sm leading-6 text-zinc-600">
-                  El modelo seleccionado se guarda en este request y cada imagen registra con qué motor fue generada.
+                  Los costos son aproximados por imagen generada y pueden variar según Google/Vercel, tipo de cambio y uso real.
                 </p>
               </div>
 
@@ -800,7 +816,7 @@ export default function GeneratorRequestDetailPage() {
                           <p className="text-xs leading-5 text-zinc-500">
                             Ejecutado con: {image.executedModel}
                             <br />
-                            Solicitado: {image.requestedModel || "-"}
+                            Solicitado: {mapGenerationModelLabel(image.requestedModel || "gemini-3-pro-image")}
                             <br />
                             Modo: {image.generationMode || "text-only"}
                             {typeof image.usedReferenceImageCount === "number" ? ` · Referencias usadas: ${image.usedReferenceImageCount}` : ""}
