@@ -28,7 +28,7 @@ type GeminiReferencePart = {
 const geminiModelLabels: Record<string, string> = {
   "gemini-3-pro-image": "Gemini Pro Imagen · profesional · aprox $2.50 MXN/img",
   "gemini-3.1-flash-image": "Gemini 3.1 Flash Imagen · balanceado · aprox $1.90 MXN/img",
-  "gemini-2.5-flash-image": "Gemini 2.5 Flash Imagen · fallback interno",
+  "gemini-2.5-flash-image": "Gemini 2.5 Flash Imagen · rápido · aprox $1.20 MXN/img",
   "nano-banana": "Gemini Pro Imagen · profesional · aprox $2.50 MXN/img",
   "draft-mini-low": "Gemini Pro Imagen · profesional · aprox $2.50 MXN/img",
   "gpt-image": "Gemini Pro Imagen · profesional · aprox $2.50 MXN/img",
@@ -76,26 +76,16 @@ function getErrorMessage(error: unknown) {
 
 function normalizeSelectedGeminiModel(model?: string) {
   switch (model) {
-    case "gemini-3.1-flash-image":
-      return "gemini-3.1-flash-image";
     case "gemini-3-pro-image":
+    case "gemini-3.1-flash-image":
+    case "gemini-2.5-flash-image":
+      return model;
     case "nano-banana":
     case "draft-mini-low":
     case "gpt-image":
     default:
       return "gemini-3-pro-image";
   }
-}
-
-function getGeminiModelCandidates(selectedModel?: string) {
-  const normalizedModel = normalizeSelectedGeminiModel(selectedModel);
-  const fallbackModels = [
-    normalizedModel,
-    normalizedModel === "gemini-3-pro-image" ? "gemini-3.1-flash-image" : "gemini-3-pro-image",
-    "gemini-2.5-flash-image",
-  ];
-
-  return Array.from(new Set([process.env.GEMINI_IMAGE_MODEL, ...fallbackModels].filter(Boolean))) as string[];
 }
 
 async function fetchReferenceImagesForGemini(referenceImages: ReferenceImageInput[]) {
@@ -386,43 +376,23 @@ async function generateWithGemini({
   const referenceParts = await fetchReferenceImagesForGemini(referenceImages);
   const aspectRatio = mapGeminiAspectRatio(format);
   const imagesBase64: string[] = [];
-  const geminiModels = getGeminiModelCandidates(selectedModel);
-  let executedModel = geminiModels[0] || "gemini-3-pro-image";
-  let lastError: unknown = null;
+  const model = normalizeSelectedGeminiModel(selectedModel);
 
   for (let index = 0; index < variantCount; index += 1) {
-    let generatedImage = "";
-
-    for (const geminiModel of geminiModels) {
-      try {
-        generatedImage = await generateOneGeminiImage({
-          prompt,
-          model: geminiModel,
-          aspectRatio,
-          referenceParts,
-        });
-        executedModel = geminiModel;
-        break;
-      } catch (error) {
-        lastError = error;
-        console.warn(`Gemini image model failed: ${geminiModel}`, error);
-      }
-    }
-
-    if (!generatedImage) {
-      throw new Error(
-        getErrorMessage(lastError) ||
-          "Gemini no devolvió imagen. Intenta con Gemini Pro Imagen o revisa GEMINI_API_KEY.",
-      );
-    }
+    const generatedImage = await generateOneGeminiImage({
+      prompt,
+      model,
+      aspectRatio,
+      referenceParts,
+    });
 
     imagesBase64.push(generatedImage);
   }
 
   return {
     imagesBase64,
-    executedModel,
-    requestedModelLabel: geminiModelLabels[normalizeSelectedGeminiModel(selectedModel)] || normalizeSelectedGeminiModel(selectedModel),
+    executedModel: model,
+    requestedModelLabel: geminiModelLabels[model] || model,
     generationMode: referenceParts.length > 0 ? "visual-references" : "text-only",
     usedReferenceImageCount: referenceParts.length,
   };
