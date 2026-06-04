@@ -148,6 +148,139 @@ function openFeedbackForImage(imageId: string) {
   );
 }
 
+function safeSlug(value?: string) {
+  return (value || "prompt")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70) || "prompt";
+}
+
+function downloadTextFile(fileName: string, content: string, mimeType = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildPromptTxt({
+  requestData,
+  promptText,
+  modelLabel,
+}: {
+  requestData: RequestData;
+  promptText: string;
+  modelLabel: string;
+}) {
+  const references = [
+    ...(requestData.requestAttachments || []).map((attachment) =>
+      `- ${attachment.name || "Referencia puntual"} (${attachmentRoleLabel(attachment.role)}): ${attachment.fileUrl || "sin URL"}${attachment.notes ? ` | Notas: ${attachment.notes}` : ""}`,
+    ),
+    ...(requestData.selectedAssetsSnapshot || []).map((asset) =>
+      `- ${asset.name || "Asset"} (${asset.type || "asset"}${asset.category ? ` / ${asset.category}` : ""}): ${asset.fileUrl || "sin URL"}${asset.notes ? ` | Notas: ${asset.notes}` : ""}`,
+    ),
+  ];
+
+  return `BUST IT NOW - PROMPT DE GENERACIÓN
+
+Cliente:
+${requestData.clientName || "-"}
+
+Giro:
+${requestData.clientIndustry || "-"}
+
+Formato:
+${requestData.format || "-"}
+
+Objetivo:
+${requestData.goal || "-"}
+
+Tipo de contenido:
+${requestData.contentType || "-"}
+
+Modelo sugerido:
+${modelLabel}
+
+Mensaje principal:
+${requestData.mainMessage || "-"}
+
+Copy:
+Headline: ${requestData.copy?.headline || "-"}
+Subheadline: ${requestData.copy?.subheadline || "-"}
+Precio / oferta: ${requestData.copy?.priceOrOffer || "-"}
+CTA: ${requestData.copy?.cta || "-"}
+
+Referencias y assets:
+${references.length ? references.join("\n") : "- Sin referencias visuales."}
+
+PROMPT FINAL:
+${promptText}
+
+Notas:
+- Si usas este prompt en otra IA, revisa que respete texto, logo y formato.
+- Si el logo debe ir exacto, agrégalo manualmente como capa o referencia.
+- Los costos mostrados son aproximados y pueden variar por proveedor, tipo de cambio y configuración.
+`;
+}
+
+function buildPromptPackage({
+  requestData,
+  promptText,
+  modelLabel,
+}: {
+  requestData: RequestData;
+  promptText: string;
+  modelLabel: string;
+}) {
+  return {
+    source: "BUST IT NOW",
+    exportedAt: new Date().toISOString(),
+    requestId: requestData.id,
+    client: {
+      id: requestData.clientId || null,
+      name: requestData.clientName || "",
+      industry: requestData.clientIndustry || "",
+    },
+    generation: {
+      format: requestData.format || "",
+      objective: requestData.goal || "",
+      contentType: requestData.contentType || "",
+      recommendedModel: normalizeGenerationModel(requestData.selectedModel),
+      recommendedModelLabel: modelLabel,
+    },
+    message: {
+      mainMessage: requestData.mainMessage || "",
+      headline: requestData.copy?.headline || "",
+      subheadline: requestData.copy?.subheadline || "",
+      priceOrOffer: requestData.copy?.priceOrOffer || "",
+      cta: requestData.copy?.cta || "",
+    },
+    visualDirection: {
+      emotions: requestData.selectedEmotions || [],
+      visualElements: requestData.selectedVisualElements || [],
+      specificInstructions: requestData.specificInstructions || "",
+    },
+    brandBrainSnapshot: requestData.brandBrainSnapshot || {},
+    logoOverlay: requestData.logoOverlay || { enabled: false },
+    requestAttachments: requestData.requestAttachments || [],
+    selectedAssetsSnapshot: requestData.selectedAssetsSnapshot || [],
+    prompt: promptText,
+    notes: [
+      "Este paquete está pensado para reutilizar el brief en otras herramientas de IA.",
+      "Si el logo debe ir exacto, colócalo como capa manual o como archivo de referencia.",
+      "Los costos mostrados son aproximados y pueden variar por proveedor, tipo de cambio y configuración.",
+    ],
+  };
+}
+
 export default function GeneratorRequestDetailPage() {
   const params = useParams<{ requestId: string }>();
   const router = useRouter();
@@ -447,6 +580,43 @@ export default function GeneratorRequestDetailPage() {
     }
   }
 
+  async function handleCopyPrompt() {
+    if (!promptText.trim()) return;
+
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setSuccess("Prompt copiado al portapapeles.");
+      setError("");
+    } catch (copyError) {
+      console.error(copyError);
+      setError("No pudimos copiar el prompt. Puedes seleccionarlo manualmente.");
+    }
+  }
+
+  function handleDownloadPromptTxt() {
+    if (!requestData) return;
+
+    const modelLabel = mapGenerationModelLabel(generationModel || requestData.selectedModel || "gemini-3-pro-image");
+    const fileName = `prompt-${safeSlug(requestData.clientName)}-${safeSlug(requestData.mainMessage)}.txt`;
+    const content = buildPromptTxt({ requestData, promptText, modelLabel });
+
+    downloadTextFile(fileName, content);
+    setSuccess("Prompt descargado en archivo .txt.");
+    setError("");
+  }
+
+  function handleDownloadPromptPackage() {
+    if (!requestData) return;
+
+    const modelLabel = mapGenerationModelLabel(generationModel || requestData.selectedModel || "gemini-3-pro-image");
+    const fileName = `paquete-ia-${safeSlug(requestData.clientName)}-${safeSlug(requestData.mainMessage)}.json`;
+    const packageContent = buildPromptPackage({ requestData, promptText, modelLabel });
+
+    downloadTextFile(fileName, JSON.stringify(packageContent, null, 2), "application/json;charset=utf-8");
+    setSuccess("Paquete para IA externa descargado en JSON.");
+    setError("");
+  }
+
   async function handleSaveAsClientAsset(image: GeneratedImageRecord) {
     if (!requestData?.clientId) {
       setError("No encontramos el cliente para guardar este asset.");
@@ -641,7 +811,32 @@ export default function GeneratorRequestDetailPage() {
             </div>
 
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Prompt final</p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Prompt final</p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleCopyPrompt}
+                    className="inline-flex h-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
+                  >
+                    📋 Copiar prompt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadPromptTxt}
+                    className="inline-flex h-10 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100"
+                  >
+                    ⬇️ Descargar .txt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadPromptPackage}
+                    className="inline-flex h-10 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800"
+                  >
+                    📦 Descargar paquete
+                  </button>
+                </div>
+              </div>
               <textarea
                 value={promptText}
                 readOnly
