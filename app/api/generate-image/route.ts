@@ -1,19 +1,10 @@
 import { NextResponse } from "next/server";
-import sharp from "sharp";
 
 export const maxDuration = 300;
 
 type ReferenceImageInput = {
   url?: string;
   name?: string;
-};
-
-type LogoOverlayInput = {
-  enabled?: boolean;
-  fileUrl?: string;
-  assetName?: string;
-  position?: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "bottom-center";
-  size?: "small" | "medium" | "large";
 };
 
 type SupportedGeminiAspectRatio = "1:1" | "4:5" | "9:16" | "16:9";
@@ -126,141 +117,6 @@ async function fetchReferenceImagesForGemini(referenceImages: ReferenceImageInpu
   return referenceParts;
 }
 
-async function fetchImageBuffer(url: string) {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error("No pudimos descargar el logo oficial para colocarlo como capa fija.");
-  }
-
-  return Buffer.from(await response.arrayBuffer());
-}
-
-function getLogoTargetWidth(baseWidth: number, size?: string) {
-  switch (size) {
-    case "small":
-      return Math.round(baseWidth * 0.14);
-    case "large":
-      return Math.round(baseWidth * 0.28);
-    case "medium":
-    default:
-      return Math.round(baseWidth * 0.2);
-  }
-}
-
-function getLogoPosition({
-  baseWidth,
-  baseHeight,
-  logoWidth,
-  logoHeight,
-  position,
-}: {
-  baseWidth: number;
-  baseHeight: number;
-  logoWidth: number;
-  logoHeight: number;
-  position?: string;
-}) {
-  const margin = Math.round(Math.min(baseWidth, baseHeight) * 0.055);
-
-  switch (position) {
-    case "top-left":
-      return { left: margin, top: margin };
-    case "top-right":
-      return { left: baseWidth - logoWidth - margin, top: margin };
-    case "bottom-left":
-      return { left: margin, top: baseHeight - logoHeight - margin };
-    case "bottom-center":
-      return {
-        left: Math.round((baseWidth - logoWidth) / 2),
-        top: baseHeight - logoHeight - margin,
-      };
-    case "bottom-right":
-    default:
-      return {
-        left: baseWidth - logoWidth - margin,
-        top: baseHeight - logoHeight - margin,
-      };
-  }
-}
-
-async function makeLogoBackgroundTransparent(logoBuffer: Buffer) {
-  const normalizedLogo = sharp(logoBuffer).ensureAlpha().png();
-  const metadata = await normalizedLogo.metadata();
-  const width = metadata.width || 1;
-  const height = metadata.height || 1;
-  const rawBuffer = await normalizedLogo.raw().toBuffer();
-
-  for (let index = 0; index < rawBuffer.length; index += 4) {
-    const red = rawBuffer[index];
-    const green = rawBuffer[index + 1];
-    const blue = rawBuffer[index + 2];
-    const alpha = rawBuffer[index + 3];
-    const isNearWhite = red >= 245 && green >= 245 && blue >= 245;
-    const isVeryLight = red >= 238 && green >= 238 && blue >= 238;
-
-    if (alpha > 0 && (isNearWhite || isVeryLight)) {
-      rawBuffer[index + 3] = 0;
-    }
-  }
-
-  return sharp(rawBuffer, {
-    raw: {
-      width,
-      height,
-      channels: 4,
-    },
-  })
-    .png()
-    .toBuffer();
-}
-
-async function applyLogoOverlayToImage(imageBase64: string, logoOverlay?: LogoOverlayInput) {
-  if (!logoOverlay?.enabled || !logoOverlay.fileUrl) return imageBase64;
-
-  const baseBuffer = Buffer.from(imageBase64, "base64");
-  const baseMetadata = await sharp(baseBuffer).metadata();
-  const baseWidth = baseMetadata.width || 1024;
-  const baseHeight = baseMetadata.height || 1024;
-
-  const logoBuffer = await fetchImageBuffer(logoOverlay.fileUrl);
-  const transparentLogoBuffer = await makeLogoBackgroundTransparent(logoBuffer);
-  const targetLogoWidth = getLogoTargetWidth(baseWidth, logoOverlay.size);
-  const resizedLogoBuffer = await sharp(transparentLogoBuffer)
-    .resize({ width: targetLogoWidth, withoutEnlargement: true })
-    .png()
-    .toBuffer();
-
-  const logoMetadata = await sharp(resizedLogoBuffer).metadata();
-  const logoWidth = logoMetadata.width || targetLogoWidth;
-  const logoHeight = logoMetadata.height || Math.round(targetLogoWidth * 0.4);
-  const position = getLogoPosition({
-    baseWidth,
-    baseHeight,
-    logoWidth,
-    logoHeight,
-    position: logoOverlay.position,
-  });
-
-  const compositedBuffer = await sharp(baseBuffer)
-    .composite([{ input: resizedLogoBuffer, left: position.left, top: position.top }])
-    .png()
-    .toBuffer();
-
-  return compositedBuffer.toString("base64");
-}
-
-async function applyLogoOverlayToImages(imagesBase64: string[], logoOverlay?: LogoOverlayInput) {
-  if (!logoOverlay?.enabled || !logoOverlay.fileUrl) return imagesBase64;
-
-  const processedImages: string[] = [];
-  for (const imageBase64 of imagesBase64) {
-    processedImages.push(await applyLogoOverlayToImage(imageBase64, logoOverlay));
-  }
-
-  return processedImages;
-}
-
 function buildGeminiPrompt(prompt: string) {
   const trimmedPrompt = prompt.trim();
   const maxPromptLength = 12000;
@@ -272,6 +128,7 @@ function buildGeminiPrompt(prompt: string) {
 Do not answer with text only.
 Do not describe the image.
 Return an actual generated image as the primary response.
+Important: if the brief mentions a logo overlay, do not create the logo. Leave clean space only. The logo will be applied later by the system.
 Follow this creative brief:
 
 ${safePrompt}`;
@@ -408,9 +265,6 @@ export async function POST(request: Request) {
     const referenceImages = Array.isArray(body.referenceImages)
       ? (body.referenceImages as ReferenceImageInput[])
       : [];
-    const logoOverlay = body.logoOverlay && typeof body.logoOverlay === "object"
-      ? (body.logoOverlay as LogoOverlayInput)
-      : undefined;
 
     if (!prompt.trim()) {
       return NextResponse.json({ error: "Falta el prompt." }, { status: 400 });
@@ -431,12 +285,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const imagesBase64 = await applyLogoOverlayToImages(result.imagesBase64, logoOverlay);
-
     return NextResponse.json({
       ...result,
-      imagesBase64,
-      logoOverlayApplied: logoOverlay?.enabled === true,
+      logoOverlayApplied: false,
     });
   } catch (error) {
     const errorMessage = getErrorMessage(error);
