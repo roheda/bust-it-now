@@ -22,6 +22,16 @@ type ClientRecord = {
   id: string;
   name: string;
   industry: string;
+  status?: string;
+};
+
+type TextBlock = {
+  id: string;
+  text: string;
+  role: string;
+  priority: string;
+  instruction: string;
+  locked: boolean;
 };
 
 type BrandBrain = {
@@ -101,6 +111,27 @@ const contentTypes = [
   { id: "branding", label: "Contenido de marca" },
 ];
 
+const textBlockRoles = [
+  { id: "headline", label: "Titular protagonista" },
+  { id: "subheadline", label: "Frase secundaria" },
+  { id: "claim", label: "Claim / frase de campaña" },
+  { id: "badge", label: "Sello / badge" },
+  { id: "bullet", label: "Bullet" },
+  { id: "price", label: "Precio" },
+  { id: "promotion", label: "Promoción" },
+  { id: "cta", label: "CTA" },
+  { id: "date", label: "Fecha" },
+  { id: "location", label: "Ubicación" },
+  { id: "disclaimer", label: "Disclaimer" },
+  { id: "free", label: "Texto libre" },
+];
+
+const textBlockPriorities = [
+  { id: "high", label: "Alta" },
+  { id: "medium", label: "Media" },
+  { id: "low", label: "Baja" },
+];
+
 const emotions = [
   "Premium",
   "Urgente",
@@ -119,7 +150,6 @@ const visualElements = [
   "Persona",
   "Ambiente",
   "Local o espacio",
-  "Logo visible",
   "Precio",
   "Fecha",
   "CTA",
@@ -166,6 +196,14 @@ const logoSizes = [
 
 function mapModelLabel(modelId: string) {
   return supportedModels.find((model) => model.id === modelId)?.label ?? modelId;
+}
+
+function textBlockRoleLabel(role: string) {
+  return textBlockRoles.find((item) => item.id === role)?.label ?? role;
+}
+
+function textBlockPriorityLabel(priority: string) {
+  return textBlockPriorities.find((item) => item.id === priority)?.label ?? priority;
 }
 
 function formatStatus(status: string) {
@@ -224,6 +262,68 @@ function safeFileName(fileName: string) {
     .replace(/^-|-$/g, "") || "request-attachment";
 }
 
+function createTextBlockId() {
+  return `text-block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createEmptyTextBlock(): TextBlock {
+  return {
+    id: createTextBlockId(),
+    text: "",
+    role: "headline",
+    priority: "high",
+    instruction: "",
+    locked: true,
+  };
+}
+
+function normalizeTextBlocks(value: unknown): TextBlock[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const block = item as Partial<TextBlock>;
+
+      return {
+        id: typeof block.id === "string" && block.id ? block.id : createTextBlockId(),
+        text: typeof block.text === "string" ? block.text : "",
+        role: typeof block.role === "string" ? block.role : "free",
+        priority: typeof block.priority === "string" ? block.priority : "medium",
+        instruction: typeof block.instruction === "string" ? block.instruction : "",
+        locked: block.locked !== false,
+      } satisfies TextBlock;
+    })
+    .filter((block): block is TextBlock => Boolean(block))
+    .filter((block) => block.text.trim().length > 0);
+}
+
+function cleanTextBlocks(blocks: TextBlock[]) {
+  return blocks
+    .filter((block) => block.text.trim().length > 0)
+    .map((block) => ({
+      id: block.id || createTextBlockId(),
+      text: block.text.trim(),
+      role: block.role,
+      roleLabel: textBlockRoleLabel(block.role),
+      priority: block.priority,
+      priorityLabel: textBlockPriorityLabel(block.priority),
+      instruction: block.instruction.trim(),
+      locked: block.locked !== false,
+    }));
+}
+
+function deriveLegacyCopy(blocks: ReturnType<typeof cleanTextBlocks>) {
+  const byRole = (roles: string[]) => blocks.find((block) => roles.includes(block.role))?.text || "";
+
+  return {
+    headline: byRole(["headline", "claim"]),
+    subheadline: byRole(["subheadline", "bullet"]),
+    priceOrOffer: byRole(["price", "promotion"]),
+    cta: byRole(["cta"]),
+  };
+}
+
 export default function GeneratorPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -232,7 +332,9 @@ export default function GeneratorPage() {
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [isLoadingRecentRequests, setIsLoadingRecentRequests] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingTextBlocks, setIsSavingTextBlocks] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [recentRequests, setRecentRequests] = useState<GenerationRequestSummary[]>([]);
@@ -240,19 +342,16 @@ export default function GeneratorPage() {
   const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
   const [brandBrain, setBrandBrain] = useState<BrandBrain | null>(null);
   const [clientAssets, setClientAssets] = useState<AssetRecord[]>([]);
+  const [textBlocks, setTextBlocks] = useState<TextBlock[]>([createEmptyTextBlock()]);
 
   const [format, setFormat] = useState("instagram-post");
   const [goal, setGoal] = useState("sell");
   const [contentType, setContentType] = useState("promotion");
   const [mainMessage, setMainMessage] = useState("");
-  const [headline, setHeadline] = useState("");
-  const [subheadline, setSubheadline] = useState("");
-  const [cta, setCta] = useState("");
-  const [priceOrOffer, setPriceOrOffer] = useState("");
   const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
   const [selectedVisualElements, setSelectedVisualElements] = useState<string[]>([]);
   const [specificInstructions, setSpecificInstructions] = useState("");
-  const [selectedModel, setSelectedModel] = useState("draft-mini-low");
+  const selectedModel = "draft-mini-low";
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
   const [requestImageFile, setRequestImageFile] = useState<File | null>(null);
@@ -295,18 +394,18 @@ export default function GeneratorPage() {
 
     try {
       const snapshot = await getDocs(query(collection(db, "clients")));
-const loadedClients = snapshot.docs
-  .map((clientDocument) => {
-    const data = clientDocument.data();
+      const loadedClients = snapshot.docs
+        .map((clientDocument) => {
+          const data = clientDocument.data();
 
-    return {
-      id: clientDocument.id,
-      name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
-      industry: typeof data.industry === "string" ? data.industry : "",
-      status: typeof data.status === "string" ? data.status : "active",
-    };
-  })
-  .filter((client) => client.status !== "deleted");
+          return {
+            id: clientDocument.id,
+            name: typeof data.name === "string" ? data.name : "Cliente sin nombre",
+            industry: typeof data.industry === "string" ? data.industry : "",
+            status: typeof data.status === "string" ? data.status : "active",
+          } satisfies ClientRecord;
+        })
+        .filter((client) => client.status !== "deleted");
 
       loadedClients.sort((a, b) => a.name.localeCompare(b.name, "es"));
       setClients(loadedClients);
@@ -352,7 +451,9 @@ const loadedClients = snapshot.docs
     setSelectedAssetIds([]);
     setLogoOverlayEnabled(false);
     setSelectedLogoAssetId("");
+    setTextBlocks([createEmptyTextBlock()]);
     setError("");
+    setSuccess("");
 
     if (!clientId) return;
 
@@ -375,6 +476,9 @@ const loadedClients = snapshot.docs
 
       setSelectedClient(loadedClient);
       setBrandBrain((clientData.brandBrain as BrandBrain | undefined) ?? null);
+
+      const savedTextBlocks = normalizeTextBlocks(clientData.textBlocks);
+      setTextBlocks(savedTextBlocks.length > 0 ? savedTextBlocks : [createEmptyTextBlock()]);
 
       const assetsSnapshot = await getDocs(
         query(collection(db, "clientAssets"), where("clientId", "==", clientId)),
@@ -409,15 +513,9 @@ const loadedClients = snapshot.docs
       if (firstLogoAsset) {
         setSelectedLogoAssetId(firstLogoAsset.id);
       }
-
-      const preferredModels = Array.isArray(clientData.brandBrain?.recommendedModels)
-        ? clientData.brandBrain.recommendedModels
-        : [];
-
-      setSelectedModel(preferredModels[0] || "draft-mini-low");
     } catch (contextError) {
       console.error(contextError);
-      setError("No pudimos cargar el Brand Brain y los assets del cliente.");
+      setError("No pudimos cargar el Brand Brain, bloques y assets del cliente.");
     } finally {
       setIsLoadingContext(false);
     }
@@ -463,9 +561,68 @@ const loadedClients = snapshot.docs
     setRequestImageNotes("");
   }
 
+  function updateTextBlock<K extends keyof TextBlock>(blockId: string, field: K, value: TextBlock[K]) {
+    setTextBlocks((currentBlocks) =>
+      currentBlocks.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              [field]: value,
+            }
+          : block,
+      ),
+    );
+  }
+
+  function addTextBlock() {
+    setTextBlocks((currentBlocks) => [...currentBlocks, createEmptyTextBlock()]);
+  }
+
+  function removeTextBlock(blockId: string) {
+    setTextBlocks((currentBlocks) => {
+      const remainingBlocks = currentBlocks.filter((block) => block.id !== blockId);
+      return remainingBlocks.length > 0 ? remainingBlocks : [createEmptyTextBlock()];
+    });
+  }
+
+  async function saveClientTextBlocks() {
+    setError("");
+    setSuccess("");
+
+    if (!selectedClientId) {
+      setError("Selecciona un cliente para guardar sus bloques.");
+      return;
+    }
+
+    const blocksToSave = cleanTextBlocks(textBlocks);
+
+    if (blocksToSave.length === 0) {
+      setError("Agrega al menos un bloque con texto antes de guardarlo en el cliente.");
+      return;
+    }
+
+    setIsSavingTextBlocks(true);
+
+    try {
+      await updateDoc(doc(db, "clients", selectedClientId), {
+        textBlocks: blocksToSave,
+        updatedAt: serverTimestamp(),
+      });
+
+      setTextBlocks(blocksToSave);
+      setSuccess("Bloques guardados en el cliente. Estarán disponibles en próximos briefs de esta marca.");
+    } catch (saveBlocksError) {
+      console.error(saveBlocksError);
+      setError("No pudimos guardar los bloques del cliente.");
+    } finally {
+      setIsSavingTextBlocks(false);
+    }
+  }
+
   async function handleSaveBrief(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    setSuccess("");
 
     if (!selectedClientId || !selectedClient) {
       setError("Selecciona un cliente.");
@@ -484,12 +641,24 @@ const loadedClients = snapshot.docs
       return;
     }
 
+    const cleanedTextBlocks = cleanTextBlocks(textBlocks);
+
+    if (cleanedTextBlocks.length === 0) {
+      setError("Agrega al menos un bloque de texto para la pieza.");
+      return;
+    }
+
     setIsSaving(true);
 
     try {
       const selectedAssetsSnapshot = clientAssets.filter((asset) =>
         selectedAssetIds.includes(asset.id),
       );
+
+      await updateDoc(doc(db, "clients", selectedClientId), {
+        textBlocks: cleanedTextBlocks,
+        updatedAt: serverTimestamp(),
+      });
 
       const logoOverlay: LogoOverlayRecord = logoOverlayEnabled && selectedLogoAsset
         ? {
@@ -512,12 +681,8 @@ const loadedClients = snapshot.docs
         goal,
         contentType,
         mainMessage: mainMessage.trim(),
-        copy: {
-          headline: headline.trim(),
-          subheadline: subheadline.trim(),
-          cta: cta.trim(),
-          priceOrOffer: priceOrOffer.trim(),
-        },
+        textBlocks: cleanedTextBlocks,
+        copy: deriveLegacyCopy(cleanedTextBlocks),
         selectedEmotions,
         selectedVisualElements,
         specificInstructions: specificInstructions.trim(),
@@ -573,8 +738,6 @@ const loadedClients = snapshot.docs
     }
   }
 
-  const selectedModelLabel = useMemo(() => mapModelLabel(selectedModel), [selectedModel]);
-  const recommendedModels = brandBrain?.recommendedModels ?? [];
   const selectedAssets = clientAssets.filter((asset) => selectedAssetIds.includes(asset.id));
   const selectedImageAssetsCount = selectedAssets.filter(isImageAsset).length;
   const logoAssets = clientAssets.filter(isLogoAsset);
@@ -604,7 +767,7 @@ const loadedClients = snapshot.docs
             Generador de piezas
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
-            Selecciona una marca, carga su Brand Brain, elige los assets que sí deben viajar al request y suma una referencia puntual para la pieza cuando haga falta.
+            Selecciona una marca, carga su Brand Brain, reutiliza sus bloques de texto y elige los assets que sí deben viajar al request.
           </p>
         </header>
 
@@ -676,23 +839,14 @@ const loadedClients = snapshot.docs
             </div>
 
             {isLoadingContext ? (
-              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-600">Leyendo Brand Brain y assets del cliente...</div>
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-600">Leyendo Brand Brain, bloques y assets del cliente...</div>
             ) : null}
 
             {selectedClient ? (
-              <div className="grid gap-4 rounded-3xl border border-zinc-200 bg-zinc-50 p-5 md:grid-cols-2">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Cliente</p>
-                  <p className="mt-2 text-lg font-semibold text-zinc-950">{selectedClient.name}</p>
-                  <p className="mt-1 text-sm text-zinc-600">{selectedClient.industry || "Sin categoría"}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Motor sugerido</p>
-                  <p className="mt-2 text-lg font-semibold text-zinc-950">{selectedModelLabel}</p>
-                  <p className="mt-1 text-sm text-zinc-600">
-                    {recommendedModels.length > 0 ? `Basado en ${recommendedModels.map(mapModelLabel).join(", ")}` : "Sin preferencia definida en Brand Brain"}
-                  </p>
-                </div>
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Cliente</p>
+                <p className="mt-2 text-lg font-semibold text-zinc-950">{selectedClient.name}</p>
+                <p className="mt-1 text-sm text-zinc-600">{selectedClient.industry || "Sin categoría"}</p>
               </div>
             ) : null}
 
@@ -705,8 +859,14 @@ const loadedClients = snapshot.docs
               </div>
             </div>
 
-            <div className="space-y-5 border-t border-zinc-200 pt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">3. Mensaje de la publicación</p>
+            <section className="space-y-5 border-t border-zinc-200 pt-6">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">3. Mensaje y bloques de texto</p>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  Los bloques se guardan en el cliente. Puedes reutilizarlos, editarlos o agregar nuevos cada vez que generes con esta marca.
+                </p>
+              </div>
+
               <TextAreaField
                 label="Qué debe entender la persona en 3 segundos"
                 value={mainMessage}
@@ -714,13 +874,91 @@ const loadedClients = snapshot.docs
                 placeholder="Ej. Promo de lanzamiento con 20% de descuento en todos los paquetes de servicio."
                 required
               />
-              <div className="grid gap-5 md:grid-cols-2">
-                <InputField label="Titular dentro de la imagen" value={headline} onChange={setHeadline} placeholder="Ej. Llega tu nueva promo" />
-                <InputField label="Subtítulo" value={subheadline} onChange={setSubheadline} placeholder="Ej. Disponible del 10 al 20 de junio" />
-                <InputField label="Precio o promoción" value={priceOrOffer} onChange={setPriceOrOffer} placeholder="Ej. $2,100 envío incluido" />
-                <InputField label="CTA" value={cta} onChange={setCta} placeholder="Ej. Pide por WhatsApp" />
+
+              <div className="space-y-4">
+                {textBlocks.map((block, index) => (
+                  <div key={block.id} className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                    <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                      <div>
+                        <p className="text-sm font-semibold text-zinc-950">Bloque {index + 1}</p>
+                        <p className="text-xs text-zinc-500">{textBlockRoleLabel(block.role)} · Prioridad {textBlockPriorityLabel(block.priority).toLowerCase()}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeTextBlock(block.id)}
+                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50"
+                      >
+                        Quitar
+                      </button>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-zinc-800">Texto</label>
+                        <textarea
+                          value={block.text}
+                          onChange={(event) => updateTextBlock(block.id, "text", event.target.value)}
+                          placeholder="Ej. BLACK WEEK"
+                          className="min-h-20 w-full rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-sm outline-none transition focus:border-zinc-950"
+                        />
+                      </div>
+
+                      <SelectField
+                        label="Uso visual"
+                        value={block.role}
+                        onChange={(value) => updateTextBlock(block.id, "role", value)}
+                        options={textBlockRoles}
+                      />
+
+                      <SelectField
+                        label="Prioridad"
+                        value={block.priority}
+                        onChange={(value) => updateTextBlock(block.id, "priority", value)}
+                        options={textBlockPriorities}
+                      />
+
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-zinc-800">Instrucción para este bloque</label>
+                        <input
+                          value={block.instruction}
+                          onChange={(event) => updateTextBlock(block.id, "instruction", event.target.value)}
+                          placeholder="Ej. usar como sello pequeño en esquina superior"
+                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950"
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 md:col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={block.locked}
+                          onChange={(event) => updateTextBlock(block.id, "locked", event.target.checked)}
+                          className="h-4 w-4"
+                        />
+                        Mantener este texto exacto, sin reescribirlo
+                      </label>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={addTextBlock}
+                  className="flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-50"
+                >
+                  + Agregar bloque
+                </button>
+                <button
+                  type="button"
+                  onClick={saveClientTextBlocks}
+                  disabled={isSavingTextBlocks || !selectedClientId}
+                  className="flex h-11 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSavingTextBlocks ? "Guardando bloques..." : "Guardar bloques del cliente"}
+                </button>
+              </div>
+            </section>
 
             <section className="space-y-5 border-t border-zinc-200 pt-6">
               <div>
@@ -875,6 +1113,38 @@ const loadedClients = snapshot.docs
             </section>
 
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Bloques del cliente</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Disponibles para esta marca</h2>
+              {!selectedClient ? (
+                <p className="mt-4 text-sm leading-6 text-zinc-600">Selecciona un cliente para ver sus bloques guardados.</p>
+              ) : cleanTextBlocks(textBlocks).length === 0 ? (
+                <p className="mt-4 text-sm leading-6 text-zinc-600">Este cliente aún no tiene bloques guardados.</p>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  {cleanTextBlocks(textBlocks).map((block) => (
+                    <div key={block.id} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full bg-zinc-950 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">
+                          {block.roleLabel}
+                        </span>
+                        <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-700">
+                          {block.priorityLabel}
+                        </span>
+                        {block.locked ? (
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">
+                            Exacto
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-zinc-950">{block.text}</p>
+                      {block.instruction ? <p className="mt-1 text-xs leading-5 text-zinc-500">{block.instruction}</p> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Assets del cliente</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">Elegir para este brief</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-600">
@@ -953,17 +1223,12 @@ const loadedClients = snapshot.docs
               ) : null}
             </section>
 
-            <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Motor de IA</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Selección del generador</h2>
-              <div className="mt-5">
-                <SelectField label="Modelo" value={selectedModel} onChange={setSelectedModel} options={supportedModels} />
-              </div>
-              <p className="mt-3 text-sm leading-6 text-zinc-600">Selección actual: <span className="font-semibold text-zinc-950">{selectedModelLabel}</span></p>
-            </section>
-
             {error ? (
               <div className="rounded-3xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">{error}</div>
+            ) : null}
+
+            {success ? (
+              <div className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">{success}</div>
             ) : null}
 
             <button
