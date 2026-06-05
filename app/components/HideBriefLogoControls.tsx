@@ -79,7 +79,7 @@ function createFilterWrapper({
   activeFilter,
   onFilter,
 }: {
-  kind: "text-blocks" | "assets" | "client-library";
+  kind: "assets" | "client-library";
   options: Array<{ id: string; label: string }>;
   activeFilter: string;
   onFilter: (filterId: string) => void;
@@ -117,6 +117,10 @@ function getActiveTextBlockSection() {
   return findSectionsByText(["3. mensaje y bloques de texto"]).find((section) => section.querySelector("textarea")) || null;
 }
 
+function getSidebarAssetSection() {
+  return findSectionsByText(["assets del cliente"]).find((section) => section.closest("aside")) || null;
+}
+
 function insertFilterBeforeList(section: HTMLElement, wrapper: HTMLElement) {
   const candidates = Array.from(section.children).filter((child) => {
     if (!(child instanceof HTMLElement)) return false;
@@ -134,45 +138,6 @@ function insertFilterBeforeList(section: HTMLElement, wrapper: HTMLElement) {
 
   const target = candidates.find((child) => child.querySelector("button, div.rounded-2xl, div.rounded-3xl"));
   section.insertBefore(wrapper, target || section.children[2] || null);
-}
-
-function textBlockCardMatches(card: HTMLElement, filterId: string) {
-  if (filterId === "all") return true;
-
-  const explicitRole = card.dataset.blockRole || "";
-  if (explicitRole) {
-    if (filterId === "promo") return explicitRole === "price" || explicitRole === "promotion";
-    return explicitRole === filterId;
-  }
-
-  const text = normalizeText(card.textContent || "");
-
-  switch (filterId) {
-    case "headline":
-      return text.includes("titular") || text.includes("main headline");
-    case "subheadline":
-      return text.includes("secundaria") || text.includes("subheadline") || text.includes("secondary");
-    case "claim":
-      return text.includes("claim");
-    case "badge":
-      return text.includes("sello") || text.includes("badge");
-    case "bullet":
-      return text.includes("bullet");
-    case "promo":
-      return text.includes("precio") || text.includes("promo") || text.includes("promocion");
-    case "cta":
-      return text.includes("cta");
-    case "date":
-      return text.includes("fecha") || text.includes("date");
-    case "location":
-      return text.includes("ubicacion") || text.includes("location");
-    case "disclaimer":
-      return text.includes("disclaimer");
-    case "free":
-      return text.includes("libre") || text.includes("free");
-    default:
-      return true;
-  }
 }
 
 function assetCardMatches(card: HTMLElement, filterId: string) {
@@ -244,20 +209,6 @@ function findAssetCards(section: HTMLElement) {
       text.includes("destacado")
     );
   });
-}
-
-function applyTextBlockFilter(section: HTMLElement, filterId: string) {
-  section.dataset.activeTextBlockFilter = filterId;
-  const cards = findTextBlockCards(section);
-  let visibleCount = 0;
-
-  cards.forEach((card) => {
-    const visible = textBlockCardMatches(card, filterId);
-    card.style.display = visible ? "" : "none";
-    if (visible) visibleCount += 1;
-  });
-
-  ensureEmptyState(section, "text-blocks", visibleCount, "No hay bloques activos para este filtro.");
 }
 
 function applyAssetFilter(section: HTMLElement, filterId: string) {
@@ -391,7 +342,6 @@ function addBlockToActiveBrief(block: ClientTextBlock) {
 
   if (emptyCard) {
     fillTextBlockCard(emptyCard, block);
-    applyTextBlockFilter(section, section.dataset.activeTextBlockFilter || "all");
     return;
   }
 
@@ -402,7 +352,6 @@ function addBlockToActiveBrief(block: ClientTextBlock) {
     const updatedCards = findTextBlockCards(section);
     const targetCard = updatedCards[updatedCards.length - 1];
     if (targetCard) fillTextBlockCard(targetCard, block);
-    applyTextBlockFilter(section, section.dataset.activeTextBlockFilter || "all");
   }, 80);
 }
 
@@ -434,7 +383,6 @@ function clearActiveTextBlocks() {
       const lockedInput = Array.from(card.querySelectorAll("input")).find((input) => input.type === "checkbox");
       if (lockedInput instanceof HTMLInputElement) setCheckboxValue(lockedInput, true);
     });
-    applyTextBlockFilter(section, "all");
   }, 120);
 }
 
@@ -459,27 +407,41 @@ function applyLibraryFilter(wrapper: HTMLElement, filterId: string) {
   if (empty instanceof HTMLElement) empty.style.display = visibleCount > 0 ? "none" : "";
 }
 
+function removeMainAreaTextFilters() {
+  document.querySelectorAll('[data-bust-filter-pills="text-blocks"], [data-bust-empty-state="text-blocks"]').forEach((element) => element.remove());
+
+  const activeSection = getActiveTextBlockSection();
+  if (!activeSection) return;
+  findTextBlockCards(activeSection).forEach((card) => {
+    card.style.display = "";
+  });
+}
+
 function renderClientBlockLibrary(clientId: string, blocks: ClientTextBlock[]) {
-  const section = getActiveTextBlockSection();
-  if (!section) return;
+  const assetSection = getSidebarAssetSection();
+  const sidebar = assetSection?.parentElement;
+  if (!assetSection || !sidebar) return;
 
-  const existing = section.querySelector("[data-bust-client-block-library]");
-  existing?.remove();
-
+  document.querySelectorAll("[data-bust-client-block-library]").forEach((element) => element.remove());
   renderedLibraryClientId = clientId;
 
-  const wrapper = document.createElement("div");
+  const wrapper = document.createElement("section");
   wrapper.dataset.bustClientBlockLibrary = "true";
-  wrapper.className = "rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm";
+  wrapper.className = "rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8";
 
   const title = document.createElement("p");
   title.className = "text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500";
-  title.textContent = "Biblioteca de bloques del cliente";
+  title.textContent = "Bloques del cliente";
   wrapper.appendChild(title);
+
+  const heading = document.createElement("h2");
+  heading.className = "mt-2 text-2xl font-semibold tracking-tight";
+  heading.textContent = "Elegir textos";
+  wrapper.appendChild(heading);
 
   const description = document.createElement("p");
   description.className = "mt-2 text-sm leading-6 text-zinc-600";
-  description.textContent = "Estos bloques están guardados en el cliente. Elige cuáles quieres usar en este brief; ya no se agregan automáticamente.";
+  description.textContent = "Elige cuáles bloques guardados quieres usar en este brief. No se agregan automáticamente.";
   wrapper.appendChild(description);
 
   const filterWrapper = createFilterWrapper({
@@ -534,9 +496,7 @@ function renderClientBlockLibrary(clientId: string, blocks: ClientTextBlock[]) {
   });
 
   empty.style.display = blocks.length > 0 ? "none" : "";
-
-  const mainMessageField = section.querySelector("textarea")?.closest("div");
-  mainMessageField?.insertAdjacentElement("afterend", wrapper);
+  sidebar.insertBefore(wrapper, assetSection);
 }
 
 async function syncClientBlockLibrary(clientId: string, shouldClearActiveBlocks: boolean) {
@@ -578,30 +538,6 @@ function watchClientSelector() {
     window.setTimeout(() => {
       if (pendingClearClientId === clientId) clearActiveTextBlocks();
     }, 500);
-  });
-}
-
-function addTextBlockFilters() {
-  const sections = [
-    ...findSectionsByText(["bloques del cliente", "3. mensaje y bloques de texto"]),
-  ];
-
-  sections.forEach((section) => {
-    if (section.dataset.bustTextBlockFilterReady === "true") {
-      applyTextBlockFilter(section, section.dataset.activeTextBlockFilter || "all");
-      return;
-    }
-
-    section.dataset.bustTextBlockFilterReady = "true";
-    section.dataset.activeTextBlockFilter = "all";
-    const wrapper = createFilterWrapper({
-      kind: "text-blocks",
-      options: textBlockFilters,
-      activeFilter: "all",
-      onFilter: (filterId) => applyTextBlockFilter(section, filterId),
-    });
-    insertFilterBeforeList(section, wrapper);
-    applyTextBlockFilter(section, "all");
   });
 }
 
@@ -668,8 +604,8 @@ function hideBriefControls() {
     }
   });
 
+  removeMainAreaTextFilters();
   watchClientSelector();
-  addTextBlockFilters();
   addAssetFilters();
 }
 
