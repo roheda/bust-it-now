@@ -70,7 +70,7 @@ function sidebarAssetSection() {
 function clientSelect() {
   const byId = document.getElementById("client-select");
   if (byId instanceof HTMLSelectElement) return byId;
-  return Array.from(document.querySelectorAll("form select")).find((select) =>
+  return Array.from(document.querySelectorAll<HTMLSelectElement>("form select")).find((select) =>
     Array.from(select.options).some((option) => n(option.textContent || "").includes("selecciona un cliente")),
   ) || null;
 }
