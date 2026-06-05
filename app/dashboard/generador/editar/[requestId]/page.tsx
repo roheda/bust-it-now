@@ -9,12 +9,13 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { auth, db, storage } from "@/lib/firebase";
 
 type ClientRecord = {
@@ -22,6 +23,15 @@ type ClientRecord = {
   name: string;
   industry: string;
   status?: string;
+};
+
+type TextBlock = {
+  id: string;
+  text: string;
+  role: string;
+  priority: string;
+  instruction: string;
+  locked: boolean;
 };
 
 type BrandBrain = {
@@ -57,15 +67,6 @@ type RequestAttachmentRecord = {
   mimeType?: string;
 };
 
-type LogoOverlayRecord = {
-  enabled: boolean;
-  assetId?: string;
-  assetName?: string;
-  fileUrl?: string;
-  position?: string;
-  size?: string;
-};
-
 type OriginalRequest = {
   id: string;
   clientId?: string;
@@ -75,6 +76,7 @@ type OriginalRequest = {
   goal?: string;
   contentType?: string;
   mainMessage?: string;
+  textBlocks?: TextBlock[];
   copy?: {
     headline?: string;
     subheadline?: string;
@@ -90,7 +92,6 @@ type OriginalRequest = {
   selectedAssetIds?: string[];
   selectedAssetsSnapshot?: AssetRecord[];
   requestAttachments?: RequestAttachmentRecord[];
-  logoOverlay?: LogoOverlayRecord;
 };
 
 type EditableAttachment = RequestAttachmentRecord & {
@@ -124,10 +125,25 @@ const contentTypes = [
   { id: "branding", label: "Contenido de marca" },
 ];
 
-const supportedModels = [
-  { id: "draft-mini-low", label: "Borrador económico · GPT Image Mini" },
-  { id: "nano-banana", label: "Calidad para redes · Nano Banana" },
-  { id: "gpt-image", label: "GPT Image estándar" },
+const textBlockRoles = [
+  { id: "headline", label: "Titular protagonista" },
+  { id: "subheadline", label: "Frase secundaria" },
+  { id: "claim", label: "Claim / frase de campaña" },
+  { id: "badge", label: "Sello / badge" },
+  { id: "bullet", label: "Bullet" },
+  { id: "price", label: "Precio" },
+  { id: "promotion", label: "Promoción" },
+  { id: "cta", label: "CTA" },
+  { id: "date", label: "Fecha" },
+  { id: "location", label: "Ubicación" },
+  { id: "disclaimer", label: "Disclaimer" },
+  { id: "free", label: "Texto libre" },
+];
+
+const textBlockPriorities = [
+  { id: "high", label: "Alta" },
+  { id: "medium", label: "Media" },
+  { id: "low", label: "Baja" },
 ];
 
 const requestAttachmentRoles = [
@@ -136,20 +152,6 @@ const requestAttachmentRoles = [
   { id: "referencia-visual", label: "Referencia visual" },
   { id: "fondo-ambiente", label: "Fondo / ambiente" },
   { id: "promocion", label: "Promoción" },
-];
-
-const logoPositions = [
-  { id: "top-left", label: "Arriba izquierda" },
-  { id: "top-right", label: "Arriba derecha" },
-  { id: "bottom-left", label: "Abajo izquierda" },
-  { id: "bottom-right", label: "Abajo derecha" },
-  { id: "bottom-center", label: "Centro inferior" },
-];
-
-const logoSizes = [
-  { id: "small", label: "Chico" },
-  { id: "medium", label: "Mediano" },
-  { id: "large", label: "Grande" },
 ];
 
 const emotions = [
@@ -170,7 +172,6 @@ const visualElements = [
   "Persona",
   "Ambiente",
   "Local o espacio",
-  "Logo visible",
   "Precio",
   "Fecha",
   "CTA",
@@ -178,8 +179,12 @@ const visualElements = [
   "Textura o patrón de marca",
 ];
 
-function mapModelLabel(modelId: string) {
-  return supportedModels.find((model) => model.id === modelId)?.label ?? modelId;
+function textBlockRoleLabel(role: string) {
+  return textBlockRoles.find((item) => item.id === role)?.label ?? role;
+}
+
+function textBlockPriorityLabel(priority: string) {
+  return textBlockPriorities.find((item) => item.id === priority)?.label ?? priority;
 }
 
 function isImageAsset(asset: AssetRecord) {
@@ -222,6 +227,90 @@ function safeFileName(fileName: string) {
     .replace(/^-|-$/g, "") || "request-attachment";
 }
 
+function createTextBlockId() {
+  return `text-block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createEmptyTextBlock(): TextBlock {
+  return {
+    id: createTextBlockId(),
+    text: "",
+    role: "headline",
+    priority: "high",
+    instruction: "",
+    locked: true,
+  };
+}
+
+function normalizeTextBlocks(value: unknown): TextBlock[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const block = item as Partial<TextBlock>;
+
+      return {
+        id: typeof block.id === "string" && block.id ? block.id : createTextBlockId(),
+        text: typeof block.text === "string" ? block.text : "",
+        role: typeof block.role === "string" ? block.role : "free",
+        priority: typeof block.priority === "string" ? block.priority : "medium",
+        instruction: typeof block.instruction === "string" ? block.instruction : "",
+        locked: block.locked !== false,
+      } satisfies TextBlock;
+    })
+    .filter((block): block is TextBlock => Boolean(block))
+    .filter((block) => block.text.trim().length > 0);
+}
+
+function legacyCopyToBlocks(copy?: OriginalRequest["copy"]): TextBlock[] {
+  const blocks: TextBlock[] = [];
+
+  if (copy?.headline?.trim()) {
+    blocks.push({ ...createEmptyTextBlock(), text: copy.headline.trim(), role: "headline", priority: "high" });
+  }
+
+  if (copy?.subheadline?.trim()) {
+    blocks.push({ ...createEmptyTextBlock(), text: copy.subheadline.trim(), role: "subheadline", priority: "medium" });
+  }
+
+  if (copy?.priceOrOffer?.trim()) {
+    blocks.push({ ...createEmptyTextBlock(), text: copy.priceOrOffer.trim(), role: "promotion", priority: "high" });
+  }
+
+  if (copy?.cta?.trim()) {
+    blocks.push({ ...createEmptyTextBlock(), text: copy.cta.trim(), role: "cta", priority: "low" });
+  }
+
+  return blocks;
+}
+
+function cleanTextBlocks(blocks: TextBlock[]) {
+  return blocks
+    .filter((block) => block.text.trim().length > 0)
+    .map((block) => ({
+      id: block.id || createTextBlockId(),
+      text: block.text.trim(),
+      role: block.role,
+      roleLabel: textBlockRoleLabel(block.role),
+      priority: block.priority,
+      priorityLabel: textBlockPriorityLabel(block.priority),
+      instruction: block.instruction.trim(),
+      locked: block.locked !== false,
+    }));
+}
+
+function deriveLegacyCopy(blocks: ReturnType<typeof cleanTextBlocks>) {
+  const byRole = (roles: string[]) => blocks.find((block) => roles.includes(block.role))?.text || "";
+
+  return {
+    headline: byRole(["headline", "claim"]),
+    subheadline: byRole(["subheadline", "bullet"]),
+    priceOrOffer: byRole(["price", "promotion"]),
+    cta: byRole(["cta"]),
+  };
+}
+
 export default function ReuseBriefPage() {
   const params = useParams<{ requestId: string }>();
   const router = useRouter();
@@ -231,7 +320,9 @@ export default function ReuseBriefPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingTextBlocks, setIsSavingTextBlocks] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [originalRequest, setOriginalRequest] = useState<OriginalRequest | null>(null);
 
   const [clients, setClients] = useState<ClientRecord[]>([]);
@@ -239,17 +330,14 @@ export default function ReuseBriefPage() {
   const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
   const [brandBrain, setBrandBrain] = useState<BrandBrain | null>(null);
   const [clientAssets, setClientAssets] = useState<AssetRecord[]>([]);
+  const [textBlocks, setTextBlocks] = useState<TextBlock[]>([createEmptyTextBlock()]);
 
   const [format, setFormat] = useState("instagram-post");
   const [goal, setGoal] = useState("sell");
   const [contentType, setContentType] = useState("promotion");
   const [mainMessage, setMainMessage] = useState("");
-  const [headline, setHeadline] = useState("");
-  const [subheadline, setSubheadline] = useState("");
-  const [priceOrOffer, setPriceOrOffer] = useState("");
-  const [cta, setCta] = useState("");
   const [specificInstructions, setSpecificInstructions] = useState("");
-  const [selectedModel, setSelectedModel] = useState("draft-mini-low");
+  const selectedModel = "draft-mini-low";
   const [selectedEmotions, setSelectedEmotions] = useState<string[]>([]);
   const [selectedVisualElements, setSelectedVisualElements] = useState<string[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
@@ -260,11 +348,6 @@ export default function ReuseBriefPage() {
   const [requestImageName, setRequestImageName] = useState("");
   const [requestImageRole, setRequestImageRole] = useState("producto-principal");
   const [requestImageNotes, setRequestImageNotes] = useState("");
-
-  const [logoOverlayEnabled, setLogoOverlayEnabled] = useState(false);
-  const [selectedLogoAssetId, setSelectedLogoAssetId] = useState("");
-  const [logoPosition, setLogoPosition] = useState("bottom-right");
-  const [logoSize, setLogoSize] = useState("medium");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -325,19 +408,18 @@ export default function ReuseBriefPage() {
         ...data,
       } as OriginalRequest;
 
+      const requestTextBlocks = normalizeTextBlocks(loadedRequest.textBlocks);
+      const legacyBlocks = legacyCopyToBlocks(loadedRequest.copy);
+
       setOriginalRequest(loadedRequest);
       setFormat(loadedRequest.format || "instagram-post");
       setGoal(loadedRequest.goal || "sell");
       setContentType(loadedRequest.contentType || "promotion");
       setMainMessage(loadedRequest.mainMessage || "");
-      setHeadline(loadedRequest.copy?.headline || "");
-      setSubheadline(loadedRequest.copy?.subheadline || "");
-      setPriceOrOffer(loadedRequest.copy?.priceOrOffer || "");
-      setCta(loadedRequest.copy?.cta || "");
+      setTextBlocks(requestTextBlocks.length > 0 ? requestTextBlocks : legacyBlocks.length > 0 ? legacyBlocks : [createEmptyTextBlock()]);
       setSpecificInstructions(loadedRequest.specificInstructions || "");
-      setSelectedModel(loadedRequest.selectedModel || "draft-mini-low");
       setSelectedEmotions(loadedRequest.selectedEmotions || []);
-      setSelectedVisualElements(loadedRequest.selectedVisualElements || []);
+      setSelectedVisualElements((loadedRequest.selectedVisualElements || []).filter((item) => item !== "Logo visible"));
       setExistingAttachments(
         (loadedRequest.requestAttachments || []).map((attachment, index) => ({
           ...attachment,
@@ -391,6 +473,14 @@ export default function ReuseBriefPage() {
       setSelectedClient(loadedClient);
       setBrandBrain((clientData.brandBrain as BrandBrain | undefined) ?? null);
 
+      if (resetVisualChoices) {
+        const clientTextBlocks = normalizeTextBlocks(clientData.textBlocks);
+        setTextBlocks(clientTextBlocks.length > 0 ? clientTextBlocks : [createEmptyTextBlock()]);
+      } else if (!sourceRequest?.textBlocks?.length && !sourceRequest?.copy) {
+        const clientTextBlocks = normalizeTextBlocks(clientData.textBlocks);
+        if (clientTextBlocks.length > 0) setTextBlocks(clientTextBlocks);
+      }
+
       const assetsSnapshot = await getDocs(
         query(collection(db, "clientAssets"), where("clientId", "==", clientId)),
       );
@@ -429,22 +519,6 @@ export default function ReuseBriefPage() {
       } else {
         setSelectedAssetIds(validSourceAssetIds);
       }
-
-      const logoAssets = loadedAssets.filter(isLogoAsset);
-      const sourceLogoOverlay = sourceRequest?.logoOverlay;
-      const sourceLogoStillExists = logoAssets.some(
-        (asset) => asset.id === sourceLogoOverlay?.assetId,
-      );
-      const firstLogoAsset = logoAssets[0];
-
-      setLogoOverlayEnabled(sourceLogoOverlay?.enabled === true && sourceLogoStillExists);
-      setSelectedLogoAssetId(
-        sourceLogoStillExists
-          ? sourceLogoOverlay?.assetId || ""
-          : firstLogoAsset?.id || "",
-      );
-      setLogoPosition(sourceLogoOverlay?.position || "bottom-right");
-      setLogoSize(sourceLogoOverlay?.size || "medium");
     } catch (contextError) {
       console.error(contextError);
       setError("No pudimos cargar el Brand Brain y los assets del cliente.");
@@ -497,9 +571,68 @@ export default function ReuseBriefPage() {
     );
   }
 
+  function updateTextBlock<K extends keyof TextBlock>(blockId: string, field: K, value: TextBlock[K]) {
+    setTextBlocks((currentBlocks) =>
+      currentBlocks.map((block) =>
+        block.id === blockId
+          ? {
+              ...block,
+              [field]: value,
+            }
+          : block,
+      ),
+    );
+  }
+
+  function addTextBlock() {
+    setTextBlocks((currentBlocks) => [...currentBlocks, createEmptyTextBlock()]);
+  }
+
+  function removeTextBlock(blockId: string) {
+    setTextBlocks((currentBlocks) => {
+      const remainingBlocks = currentBlocks.filter((block) => block.id !== blockId);
+      return remainingBlocks.length > 0 ? remainingBlocks : [createEmptyTextBlock()];
+    });
+  }
+
+  async function saveClientTextBlocks() {
+    setError("");
+    setSuccess("");
+
+    if (!selectedClientId) {
+      setError("Selecciona un cliente para guardar sus bloques.");
+      return;
+    }
+
+    const blocksToSave = cleanTextBlocks(textBlocks);
+
+    if (blocksToSave.length === 0) {
+      setError("Agrega al menos un bloque con texto antes de guardarlo en el cliente.");
+      return;
+    }
+
+    setIsSavingTextBlocks(true);
+
+    try {
+      await updateDoc(doc(db, "clients", selectedClientId), {
+        textBlocks: blocksToSave,
+        updatedAt: serverTimestamp(),
+      });
+
+      setTextBlocks(blocksToSave);
+      setSuccess("Bloques guardados en el cliente.");
+    } catch (saveBlocksError) {
+      console.error(saveBlocksError);
+      setError("No pudimos guardar los bloques del cliente.");
+    } finally {
+      setIsSavingTextBlocks(false);
+    }
+  }
+
   async function handleSaveReusableBrief(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    setSuccess("");
 
     if (!originalRequest) {
       setError("No encontramos el brief original.");
@@ -516,10 +649,10 @@ export default function ReuseBriefPage() {
       return;
     }
 
-    const selectedLogoAsset = clientAssets.find((asset) => asset.id === selectedLogoAssetId);
+    const cleanedTextBlocks = cleanTextBlocks(textBlocks);
 
-    if (logoOverlayEnabled && !selectedLogoAsset) {
-      setError("Selecciona un logo oficial o desactiva la opción de logo fijo.");
+    if (cleanedTextBlocks.length === 0) {
+      setError("Agrega al menos un bloque de texto para esta nueva versión.");
       return;
     }
 
@@ -530,18 +663,10 @@ export default function ReuseBriefPage() {
         selectedAssetIds.includes(asset.id),
       );
 
-      const logoOverlay: LogoOverlayRecord = logoOverlayEnabled && selectedLogoAsset
-        ? {
-            enabled: true,
-            assetId: selectedLogoAsset.id,
-            assetName: selectedLogoAsset.name,
-            fileUrl: selectedLogoAsset.fileUrl,
-            position: logoPosition,
-            size: logoSize,
-          }
-        : {
-            enabled: false,
-          };
+      await updateDoc(doc(db, "clients", selectedClientId), {
+        textBlocks: cleanedTextBlocks,
+        updatedAt: serverTimestamp(),
+      });
 
       const keptAttachments: RequestAttachmentRecord[] = existingAttachments
         .filter((attachment) => attachment.keep)
@@ -562,22 +687,18 @@ export default function ReuseBriefPage() {
         goal,
         contentType,
         mainMessage: mainMessage.trim(),
-        copy: {
-          headline: headline.trim(),
-          subheadline: subheadline.trim(),
-          cta: cta.trim(),
-          priceOrOffer: priceOrOffer.trim(),
-        },
+        textBlocks: cleanedTextBlocks,
+        copy: deriveLegacyCopy(cleanedTextBlocks),
         selectedEmotions,
-        selectedVisualElements,
+        selectedVisualElements: selectedVisualElements.filter((item) => item !== "Logo visible"),
         specificInstructions: specificInstructions.trim(),
         selectedModel,
-        selectedModelLabel: mapModelLabel(selectedModel),
+        selectedModelLabel: "Borrador económico · GPT Image Mini",
         brandBrainSnapshot: brandBrain ?? {},
         selectedAssetIds,
         selectedAssetsSnapshot,
         requestAttachments: keptAttachments,
-        logoOverlay,
+        logoOverlay: { enabled: false },
         clonedFromRequestId: originalRequest.id,
         status: requestImageFile ? "saving_assets" : "brief_ready",
         createdBy: auth.currentUser?.uid ?? null,
@@ -608,7 +729,6 @@ export default function ReuseBriefPage() {
       }
 
       if (requestImageFile) {
-        const { updateDoc } = await import("firebase/firestore");
         await updateDoc(newRequestRef, {
           requestAttachments: finalAttachments,
           status: "brief_ready",
@@ -626,9 +746,7 @@ export default function ReuseBriefPage() {
   }
 
   const selectedAssets = clientAssets.filter((asset) => selectedAssetIds.includes(asset.id));
-  const logoAssets = clientAssets.filter(isLogoAsset);
-  const selectedLogoAsset = logoAssets.find((asset) => asset.id === selectedLogoAssetId);
-  const selectedModelLabel = useMemo(() => mapModelLabel(selectedModel), [selectedModel]);
+  const selectedImageAssetsCount = selectedAssets.filter(isImageAsset).length;
 
   if (isCheckingSession || isLoading) {
     return (
@@ -667,7 +785,7 @@ export default function ReuseBriefPage() {
             Editor completo del brief
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-300">
-            Edita contenido, assets, referencias puntuales y logo. Al guardar se crea un nuevo request, conservando el original intacto.
+            Edita contenido, bloques de texto, assets y referencias puntuales. El logo se agrega después desde el editor post-generación.
           </p>
         </header>
 
@@ -687,14 +805,13 @@ export default function ReuseBriefPage() {
               />
 
               {isLoadingContext ? (
-                <div className="rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-600">Cargando assets y Brand Brain...</div>
+                <div className="rounded-3xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-600">Cargando assets, bloques y Brand Brain...</div>
               ) : null}
 
               {selectedClient ? (
                 <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-5 text-sm leading-6 text-zinc-600">
                   <p><span className="font-semibold text-zinc-950">Cliente:</span> {selectedClient.name}</p>
                   <p><span className="font-semibold text-zinc-950">Giro:</span> {selectedClient.industry || "Sin categoría"}</p>
-                  <p><span className="font-semibold text-zinc-950">Modelo actual:</span> {selectedModelLabel}</p>
                 </div>
               ) : null}
             </section>
@@ -709,7 +826,13 @@ export default function ReuseBriefPage() {
             </section>
 
             <section className="space-y-5 border-t border-zinc-200 pt-6">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">3. Mensaje</p>
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">3. Mensaje y bloques de texto</p>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  Este editor ya usa el nuevo sistema de bloques. Si el brief original era viejo, convertimos titular, subtítulo, precio y CTA a bloques editables.
+                </p>
+              </div>
+
               <TextAreaField
                 label="Qué debe entender la persona en 3 segundos"
                 value={mainMessage}
@@ -717,12 +840,91 @@ export default function ReuseBriefPage() {
                 placeholder="Mensaje principal del brief"
                 required
               />
-              <div className="grid gap-5 md:grid-cols-2">
-                <InputField label="Titular dentro de la imagen" value={headline} onChange={setHeadline} placeholder="Titular" />
-                <InputField label="Subtítulo" value={subheadline} onChange={setSubheadline} placeholder="Subtítulo" />
-                <InputField label="Precio o promoción" value={priceOrOffer} onChange={setPriceOrOffer} placeholder="Precio u oferta" />
-                <InputField label="CTA" value={cta} onChange={setCta} placeholder="CTA" />
+
+              <div className="space-y-4">
+                {textBlocks.map((block, index) => (
+                  <div key={block.id} className="rounded-3xl border border-zinc-200 bg-zinc-50 p-4">
+                    <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                      <div>
+                        <p className="text-sm font-semibold text-zinc-950">Bloque {index + 1}</p>
+                        <p className="text-xs text-zinc-500">{textBlockRoleLabel(block.role)} · Prioridad {textBlockPriorityLabel(block.priority).toLowerCase()}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeTextBlock(block.id)}
+                        className="inline-flex h-9 items-center justify-center rounded-2xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50"
+                      >
+                        Quitar
+                      </button>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-zinc-800">Texto</label>
+                        <textarea
+                          value={block.text}
+                          onChange={(event) => updateTextBlock(block.id, "text", event.target.value)}
+                          placeholder="Ej. BLACK WEEK"
+                          className="min-h-20 w-full rounded-2xl border border-zinc-200 bg-white px-3 py-3 text-sm outline-none transition focus:border-zinc-950"
+                        />
+                      </div>
+
+                      <SelectField
+                        label="Uso visual"
+                        value={block.role}
+                        onChange={(value) => updateTextBlock(block.id, "role", value)}
+                        options={textBlockRoles}
+                      />
+
+                      <SelectField
+                        label="Prioridad"
+                        value={block.priority}
+                        onChange={(value) => updateTextBlock(block.id, "priority", value)}
+                        options={textBlockPriorities}
+                      />
+
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-zinc-800">Instrucción para este bloque</label>
+                        <input
+                          value={block.instruction}
+                          onChange={(event) => updateTextBlock(block.id, "instruction", event.target.value)}
+                          placeholder="Ej. usar como sello pequeño en esquina superior"
+                          className="h-11 w-full rounded-2xl border border-zinc-200 bg-white px-3 text-sm outline-none transition focus:border-zinc-950"
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 md:col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={block.locked}
+                          onChange={(event) => updateTextBlock(block.id, "locked", event.target.checked)}
+                          className="h-4 w-4"
+                        />
+                        Mantener este texto exacto, sin reescribirlo
+                      </label>
+                    </div>
+                  </div>
+                ))}
               </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={addTextBlock}
+                  className="flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-50"
+                >
+                  + Agregar bloque
+                </button>
+                <button
+                  type="button"
+                  onClick={saveClientTextBlocks}
+                  disabled={isSavingTextBlocks || !selectedClientId}
+                  className="flex h-11 items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSavingTextBlocks ? "Guardando bloques..." : "Guardar bloques del cliente"}
+                </button>
+              </div>
+
               <TextAreaField
                 label="Instrucciones puntuales"
                 value={specificInstructions}
@@ -798,7 +1000,7 @@ export default function ReuseBriefPage() {
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Assets del cliente</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">Editar selección</h2>
-              <p className="mt-2 text-sm leading-6 text-zinc-600">Los logos se manejan aparte como capa fija. Los demás assets pueden activarse o quitarse para este nuevo request.</p>
+              <p className="mt-2 text-sm leading-6 text-zinc-600">Los logos no se seleccionan aquí; se agregan después con el editor de logo post-generación.</p>
 
               {clientAssets.length === 0 ? (
                 <p className="mt-5 rounded-3xl border border-dashed border-zinc-300 bg-zinc-50 px-5 py-6 text-sm text-zinc-600">Este cliente no tiene assets cargados.</p>
@@ -826,12 +1028,19 @@ export default function ReuseBriefPage() {
                             {imageAsset ? <img src={asset.fileUrl} alt={asset.name} className="h-14 w-full object-contain p-2" /> : <div className="flex h-14 items-center justify-center text-[10px] font-semibold uppercase tracking-[0.12em]">File</div>}
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold">{asset.name}</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-semibold">{asset.name}</p>
+                              {logoAsset ? (
+                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-800">
+                                  Logo post-generación
+                                </span>
+                              ) : null}
+                            </div>
                             <p className={`mt-1 text-xs ${selected ? "text-zinc-300" : "text-zinc-500"}`}>{asset.type || "asset"} {asset.category ? `· ${asset.category}` : ""}</p>
                           </div>
                         </div>
                         <div className="mt-3 flex justify-end">
-                          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${selected ? "bg-white text-zinc-950" : "bg-zinc-950 text-white"}`}>{logoAsset ? "Se elige en logo" : selected ? "Usar" : "Omitir"}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${selected ? "bg-white text-zinc-950" : "bg-zinc-950 text-white"}`}>{logoAsset ? "No viaja al brief" : selected ? "Usar" : "Omitir"}</span>
                         </div>
                       </button>
                     );
@@ -841,55 +1050,17 @@ export default function ReuseBriefPage() {
             </section>
 
             <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Logo oficial opcional</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Editar logo fijo</h2>
-              <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-3xl border border-zinc-200 bg-zinc-50 p-4 text-sm font-semibold text-zinc-900">
-                <input
-                  type="checkbox"
-                  checked={logoOverlayEnabled}
-                  onChange={(event) => setLogoOverlayEnabled(event.target.checked)}
-                  disabled={logoAssets.length === 0}
-                  className="mt-1 h-4 w-4"
-                />
-                <span>
-                  Agregar logo oficial como capa fija
-                  <span className="mt-1 block text-sm font-normal leading-6 text-zinc-600">
-                    {logoAssets.length > 0 ? "Opcional por pieza. Se pega como capa real al final." : "Este cliente no tiene assets marcados como logo."}
-                  </span>
-                </span>
-              </label>
-
-              {logoOverlayEnabled && logoAssets.length > 0 ? (
-                <div className="mt-5 space-y-4">
-                  <SelectField label="Logo oficial" value={selectedLogoAssetId} onChange={setSelectedLogoAssetId} options={logoAssets.map((asset) => ({ id: asset.id, label: asset.name }))} />
-                  <SelectField label="Posición" value={logoPosition} onChange={setLogoPosition} options={logoPositions} />
-                  <SelectField label="Tamaño" value={logoSize} onChange={setLogoSize} options={logoSizes} />
-                  {selectedLogoAsset ? (
-                    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                      <img src={selectedLogoAsset.fileUrl} alt={selectedLogoAsset.name} className="h-20 w-full object-contain" />
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
-
-            <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Motor de IA</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Modelo</h2>
-              <div className="mt-5">
-                <SelectField label="Modelo" value={selectedModel} onChange={setSelectedModel} options={supportedModels} />
-              </div>
-            </section>
-
-            <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">Resumen</p>
               <div className="mt-4 rounded-3xl border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 text-zinc-600">
+                <p><span className="font-semibold text-zinc-950">{cleanTextBlocks(textBlocks).length}</span> bloque(s) de texto.</p>
                 <p><span className="font-semibold text-zinc-950">{selectedAssets.length}</span> asset(s) seleccionados.</p>
+                <p><span className="font-semibold text-zinc-950">{selectedImageAssetsCount}</span> asset(s) de imagen.</p>
                 <p><span className="font-semibold text-zinc-950">{existingAttachments.filter((attachment) => attachment.keep).length + (requestImageFile ? 1 : 0)}</span> referencia(s) puntual(es).</p>
-                <p><span className="font-semibold text-zinc-950">{logoOverlayEnabled ? "Sí" : "No"}</span> lleva logo fijo.</p>
+                <p><span className="font-semibold text-zinc-950">No</span> lleva logo fijo en el brief.</p>
               </div>
 
               {error ? <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+              {success ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div> : null}
 
               <div className="mt-6 flex flex-col gap-3">
                 <button
