@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-function hideLogoBriefControls() {
+function hideBriefControls() {
   if (typeof window === "undefined") return;
 
   const pathname = window.location.pathname;
@@ -10,7 +10,7 @@ function hideLogoBriefControls() {
 
   if (!isGeneratorBriefPage) return;
 
-  const allElements = Array.from(document.querySelectorAll("p, label, button, span"));
+  const allElements = Array.from(document.querySelectorAll("p, label, button, span, h2"));
 
   allElements.forEach((element) => {
     const text = element.textContent?.trim().toLowerCase() || "";
@@ -30,15 +30,31 @@ function hideLogoBriefControls() {
         button.setAttribute("data-hidden-logo-visual-chip", "true");
       }
     }
+
+    if (text.includes("motor de ia") || text.includes("selección del generador")) {
+      const section = element.closest("section");
+      if (section instanceof HTMLElement) {
+        section.style.display = "none";
+        section.setAttribute("data-hidden-generator-model-section", "true");
+      }
+    }
+
+    if (text === "motor sugerido") {
+      const card = element.closest("div");
+      if (card instanceof HTMLElement) {
+        card.style.display = "none";
+        card.setAttribute("data-hidden-suggested-model-card", "true");
+      }
+    }
   });
 }
 
 export default function HideBriefLogoControls() {
   useEffect(() => {
-    hideLogoBriefControls();
+    hideBriefControls();
 
     const observer = new MutationObserver(() => {
-      hideLogoBriefControls();
+      hideBriefControls();
     });
 
     observer.observe(document.body, {
