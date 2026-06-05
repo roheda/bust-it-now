@@ -65,7 +65,7 @@ export default function DashboardPage() {
           </button>
         </header>
 
-        <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           <Link
             href="/dashboard/clientes"
             className="group rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-lg hover:shadow-zinc-200/70"
@@ -81,16 +81,6 @@ export default function DashboardPage() {
               Abrir módulo →
             </p>
           </Link>
-
-          <article className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="mb-6 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-600">
-              Integrado
-            </div>
-            <h2 className="text-2xl font-semibold tracking-tight">Assets</h2>
-            <p className="mt-3 text-sm leading-6 text-zinc-600">
-              Logos, referencias permanentes, fotos de producto y stock por cliente.
-            </p>
-          </article>
 
           <Link
             href="/dashboard/generador"
