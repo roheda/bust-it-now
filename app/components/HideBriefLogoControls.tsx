@@ -42,8 +42,8 @@ const assetFilters = [
 
 const clientBlockCache = new Map<string, ClientTextBlock[]>();
 const observedClientSelects = new WeakSet<HTMLSelectElement>();
-let pendingClearClientId = "";
 let renderedLibraryClientId = "";
+let pendingClearClientId = "";
 
 function normalizeText(value: string) {
   return value
@@ -55,7 +55,6 @@ function normalizeText(value: string) {
 
 function isGeneratorBriefPage() {
   if (typeof window === "undefined") return false;
-
   const pathname = window.location.pathname;
   return pathname === "/dashboard/generador" || pathname.startsWith("/dashboard/generador/editar/");
 }
@@ -67,9 +66,10 @@ function pillClass(active: boolean) {
 }
 
 function setActivePill(wrapper: HTMLElement, activeFilter: string) {
-  Array.from(wrapper.querySelectorAll("button[data-filter-id]")).forEach((button) => {
-    if (!(button instanceof HTMLButtonElement)) return;
-    button.className = pillClass(button.dataset.filterId === activeFilter);
+  wrapper.querySelectorAll("button[data-filter-id]").forEach((button) => {
+    if (button instanceof HTMLButtonElement) {
+      button.className = pillClass(button.dataset.filterId === activeFilter);
+    }
   });
 }
 
@@ -106,7 +106,6 @@ function createFilterWrapper({
 
 function findSectionsByText(patterns: string[]) {
   const normalizedPatterns = patterns.map(normalizeText);
-
   return Array.from(document.querySelectorAll("section")).filter((section): section is HTMLElement => {
     const text = normalizeText(section.textContent || "");
     return normalizedPatterns.some((pattern) => text.includes(pattern));
@@ -121,161 +120,6 @@ function getSidebarAssetSection() {
   return findSectionsByText(["assets del cliente"]).find((section) => section.closest("aside")) || null;
 }
 
-function insertFilterBeforeList(section: HTMLElement, wrapper: HTMLElement) {
-  const candidates = Array.from(section.children).filter((child) => {
-    if (!(child instanceof HTMLElement)) return false;
-    if (child.dataset.bustFilterPills) return false;
-    if (child.dataset.bustClientBlockLibrary) return false;
-
-    const className = child.className.toString();
-    return (
-      className.includes("space-y-4") ||
-      className.includes("space-y-3") ||
-      className.includes("grid gap") ||
-      className.includes("mt-5")
-    );
-  });
-
-  const target = candidates.find((child) => child.querySelector("button, div.rounded-2xl, div.rounded-3xl"));
-  section.insertBefore(wrapper, target || section.children[2] || null);
-}
-
-function assetCardMatches(card: HTMLElement, filterId: string) {
-  if (filterId === "all") return true;
-
-  const text = normalizeText(card.textContent || "");
-
-  switch (filterId) {
-    case "logo":
-      return text.includes("logo") || text.includes("logotipo");
-    case "reference":
-      return text.includes("reference") || text.includes("referencia");
-    case "product":
-      return text.includes("product") || text.includes("producto");
-    case "element":
-      return text.includes("element") || text.includes("elemento");
-    case "stock":
-      return text.includes("stock");
-    case "featured":
-      return text.includes("destacado");
-    default:
-      return true;
-  }
-}
-
-function findTextBlockCards(section: HTMLElement) {
-  const cards = Array.from(section.querySelectorAll("div.rounded-2xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
-    if (!(card instanceof HTMLElement)) return false;
-    if (card.dataset.bustFilterPills) return false;
-    if (card.closest("[data-bust-client-block-library]")) return false;
-
-    const text = normalizeText(card.textContent || "");
-    const looksLikeTextBlock =
-      text.includes("bloque") ||
-      text.includes("titular") ||
-      text.includes("secundaria") ||
-      text.includes("claim") ||
-      text.includes("sello") ||
-      text.includes("badge") ||
-      text.includes("bullet") ||
-      text.includes("cta") ||
-      text.includes("fecha") ||
-      text.includes("ubicacion") ||
-      text.includes("disclaimer") ||
-      text.includes("texto libre") ||
-      text.includes("exacto");
-
-    return looksLikeTextBlock && !text.includes("que debe entender la persona en 3 segundos");
-  });
-
-  return cards.filter((card) => !card.closest("[data-bust-filter-pills]"));
-}
-
-function findAssetCards(section: HTMLElement) {
-  return Array.from(section.querySelectorAll("button.rounded-3xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
-    if (!(card instanceof HTMLElement)) return false;
-    if (card.dataset.bustFilterPills) return false;
-
-    const text = normalizeText(card.textContent || "");
-    return (
-      text.includes("usar") ||
-      text.includes("omitir") ||
-      text.includes("asset") ||
-      text.includes("logo") ||
-      text.includes("referencia") ||
-      text.includes("producto") ||
-      text.includes("elemento") ||
-      text.includes("stock") ||
-      text.includes("destacado")
-    );
-  });
-}
-
-function applyAssetFilter(section: HTMLElement, filterId: string) {
-  section.dataset.activeAssetFilter = filterId;
-  const cards = findAssetCards(section);
-  let visibleCount = 0;
-
-  cards.forEach((card) => {
-    const visible = assetCardMatches(card, filterId);
-    card.style.display = visible ? "" : "none";
-    if (visible) visibleCount += 1;
-  });
-
-  ensureEmptyState(section, "assets", visibleCount, "No hay assets en esta categoría.");
-}
-
-function ensureEmptyState(section: HTMLElement, kind: string, visibleCount: number, message: string) {
-  const existing = section.querySelector(`[data-bust-empty-state="${kind}"]`);
-
-  if (visibleCount > 0) {
-    existing?.remove();
-    return;
-  }
-
-  if (existing) return;
-
-  const empty = document.createElement("p");
-  empty.dataset.bustEmptyState = kind;
-  empty.className = "mt-3 rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-600";
-  empty.textContent = message;
-  const wrapper = section.querySelector(`[data-bust-filter-pills="${kind}"]`);
-  wrapper?.insertAdjacentElement("afterend", empty);
-}
-
-function normalizeClientTextBlocks(value: unknown): ClientTextBlock[] {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const block = item as Partial<ClientTextBlock>;
-      const text = typeof block.text === "string" ? block.text.trim() : "";
-      if (!text) return null;
-
-      return {
-        id: typeof block.id === "string" && block.id ? block.id : `library-${Math.random().toString(36).slice(2, 8)}`,
-        text,
-        role: typeof block.role === "string" ? block.role : "free",
-        roleLabel: typeof block.roleLabel === "string" ? block.roleLabel : "Texto libre",
-        priority: typeof block.priority === "string" ? block.priority : "medium",
-        priorityLabel: typeof block.priorityLabel === "string" ? block.priorityLabel : "Media",
-        instruction: typeof block.instruction === "string" ? block.instruction : "",
-        locked: block.locked !== false,
-      } satisfies ClientTextBlock;
-    })
-    .filter((block): block is ClientTextBlock => Boolean(block));
-}
-
-async function loadClientTextBlocks(clientId: string) {
-  if (clientBlockCache.has(clientId)) return clientBlockCache.get(clientId) || [];
-
-  const snapshot = await getDoc(doc(db, "clients", clientId));
-  const blocks = snapshot.exists() ? normalizeClientTextBlocks(snapshot.data().textBlocks) : [];
-  clientBlockCache.set(clientId, blocks);
-  return blocks;
-}
-
 function getClientSelect() {
   const direct = document.getElementById("client-select");
   if (direct instanceof HTMLSelectElement) return direct;
@@ -284,9 +128,45 @@ function getClientSelect() {
   if (!form) return null;
 
   const selects = Array.from(form.querySelectorAll("select"));
-  return selects.find((select) =>
-    Array.from(select.options).some((option) => normalizeText(option.textContent || "").includes("selecciona un cliente")),
-  ) || selects[0] || null;
+  return (
+    selects.find((select) =>
+      Array.from(select.options).some((option) => normalizeText(option.textContent || "").includes("selecciona un cliente")),
+    ) ||
+    selects[0] ||
+    null
+  );
+}
+
+function sectionChildrenWithFilterPills(section: HTMLElement) {
+  return Array.from(section.children).filter((child): child is HTMLElement => {
+    if (!(child instanceof HTMLElement)) return false;
+    const text = normalizeText(child.textContent || "");
+    const filterHits = textBlockFilters.filter((filter) => text.includes(normalizeText(filter.label))).length;
+    return filterHits >= 4 && !child.closest("aside");
+  });
+}
+
+function removeMainAreaTextFilters() {
+  document
+    .querySelectorAll('[data-bust-filter-pills="text-blocks"], [data-bust-empty-state="text-blocks"]')
+    .forEach((element) => element.remove());
+
+  document.querySelectorAll('[data-bust-filter-pills="client-library"]').forEach((element) => {
+    if (!element.closest("aside")) element.remove();
+  });
+
+  findSectionsByText(["1. selecciona la marca", "3. mensaje y bloques de texto"]).forEach((section) => {
+    sectionChildrenWithFilterPills(section).forEach((element) => element.remove());
+  });
+}
+
+function findTextBlockCards(section: HTMLElement) {
+  return Array.from(section.querySelectorAll("div.rounded-2xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
+    if (!(card instanceof HTMLElement)) return false;
+    if (card.closest("[data-bust-client-block-library]")) return false;
+    const text = normalizeText(card.textContent || "");
+    return text.includes("bloque") && !text.includes("que debe entender la persona en 3 segundos");
+  });
 }
 
 function setFieldValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
@@ -302,9 +182,7 @@ function setFieldValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSel
 }
 
 function setCheckboxValue(element: HTMLInputElement, checked: boolean) {
-  if (element.checked !== checked) {
-    element.click();
-  }
+  if (element.checked !== checked) element.click();
 }
 
 function fillTextBlockCard(card: HTMLElement, block: ClientTextBlock) {
@@ -342,16 +220,16 @@ function addBlockToActiveBrief(block: ClientTextBlock) {
 
   if (emptyCard) {
     fillTextBlockCard(emptyCard, block);
+    removeMainAreaTextFilters();
     return;
   }
 
-  const addButton = findAddTextBlockButton(section);
-  addButton?.click();
-
+  findAddTextBlockButton(section)?.click();
   window.setTimeout(() => {
     const updatedCards = findTextBlockCards(section);
     const targetCard = updatedCards[updatedCards.length - 1];
     if (targetCard) fillTextBlockCard(targetCard, block);
+    removeMainAreaTextFilters();
   }, 80);
 }
 
@@ -359,8 +237,7 @@ function clearActiveTextBlocks() {
   const section = getActiveTextBlockSection();
   if (!section) return;
 
-  const cards = findTextBlockCards(section);
-  cards.forEach((card) => {
+  findTextBlockCards(section).forEach((card) => {
     const removeButton = Array.from(card.querySelectorAll("button")).find((button): button is HTMLButtonElement => {
       return normalizeText(button.textContent || "").includes("quitar");
     });
@@ -368,8 +245,7 @@ function clearActiveTextBlocks() {
   });
 
   window.setTimeout(() => {
-    const remainingCards = findTextBlockCards(section);
-    remainingCards.forEach((card) => {
+    findTextBlockCards(section).forEach((card) => {
       const textarea = card.querySelector("textarea");
       if (textarea instanceof HTMLTextAreaElement) setFieldValue(textarea, "");
 
@@ -383,7 +259,40 @@ function clearActiveTextBlocks() {
       const lockedInput = Array.from(card.querySelectorAll("input")).find((input) => input.type === "checkbox");
       if (lockedInput instanceof HTMLInputElement) setCheckboxValue(lockedInput, true);
     });
+    removeMainAreaTextFilters();
   }, 120);
+}
+
+function normalizeClientTextBlocks(value: unknown): ClientTextBlock[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const block = item as Partial<ClientTextBlock>;
+      const text = typeof block.text === "string" ? block.text.trim() : "";
+      if (!text) return null;
+
+      return {
+        id: typeof block.id === "string" && block.id ? block.id : `library-${Math.random().toString(36).slice(2, 8)}`,
+        text,
+        role: typeof block.role === "string" ? block.role : "free",
+        roleLabel: typeof block.roleLabel === "string" ? block.roleLabel : "Texto libre",
+        priority: typeof block.priority === "string" ? block.priority : "medium",
+        priorityLabel: typeof block.priorityLabel === "string" ? block.priorityLabel : "Media",
+        instruction: typeof block.instruction === "string" ? block.instruction : "",
+        locked: block.locked !== false,
+      } satisfies ClientTextBlock;
+    })
+    .filter((block): block is ClientTextBlock => Boolean(block));
+}
+
+async function loadClientTextBlocks(clientId: string) {
+  if (clientBlockCache.has(clientId)) return clientBlockCache.get(clientId) || [];
+  const snapshot = await getDoc(doc(db, "clients", clientId));
+  const blocks = snapshot.exists() ? normalizeClientTextBlocks(snapshot.data().textBlocks) : [];
+  clientBlockCache.set(clientId, blocks);
+  return blocks;
 }
 
 function libraryCardMatches(card: HTMLElement, filterId: string) {
@@ -405,16 +314,6 @@ function applyLibraryFilter(wrapper: HTMLElement, filterId: string) {
 
   const empty = wrapper.querySelector("[data-library-empty-state]");
   if (empty instanceof HTMLElement) empty.style.display = visibleCount > 0 ? "none" : "";
-}
-
-function removeMainAreaTextFilters() {
-  document.querySelectorAll('[data-bust-filter-pills="text-blocks"], [data-bust-empty-state="text-blocks"]').forEach((element) => element.remove());
-
-  const activeSection = getActiveTextBlockSection();
-  if (!activeSection) return;
-  findTextBlockCards(activeSection).forEach((card) => {
-    card.style.display = "";
-  });
 }
 
 function renderClientBlockLibrary(clientId: string, blocks: ClientTextBlock[]) {
@@ -497,6 +396,7 @@ function renderClientBlockLibrary(clientId: string, blocks: ClientTextBlock[]) {
 
   empty.style.display = blocks.length > 0 ? "none" : "";
   sidebar.insertBefore(wrapper, assetSection);
+  removeMainAreaTextFilters();
 }
 
 async function syncClientBlockLibrary(clientId: string, shouldClearActiveBlocks: boolean) {
@@ -541,8 +441,65 @@ function watchClientSelector() {
   });
 }
 
+function assetCardMatches(card: HTMLElement, filterId: string) {
+  if (filterId === "all") return true;
+  const text = normalizeText(card.textContent || "");
+
+  switch (filterId) {
+    case "logo":
+      return text.includes("logo") || text.includes("logotipo");
+    case "reference":
+      return text.includes("reference") || text.includes("referencia");
+    case "product":
+      return text.includes("product") || text.includes("producto");
+    case "element":
+      return text.includes("element") || text.includes("elemento");
+    case "stock":
+      return text.includes("stock");
+    case "featured":
+      return text.includes("destacado");
+    default:
+      return true;
+  }
+}
+
+function findAssetCards(section: HTMLElement) {
+  return Array.from(section.querySelectorAll("button.rounded-3xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
+    if (!(card instanceof HTMLElement)) return false;
+    if (card.dataset.bustFilterPills) return false;
+    const text = normalizeText(card.textContent || "");
+    return text.includes("asset") || text.includes("usar") || text.includes("omitir") || text.includes("logo") || text.includes("referencia") || text.includes("producto") || text.includes("elemento") || text.includes("stock") || text.includes("destacado");
+  });
+}
+
+function applyAssetFilter(section: HTMLElement, filterId: string) {
+  section.dataset.activeAssetFilter = filterId;
+  const cards = findAssetCards(section);
+  let visibleCount = 0;
+
+  cards.forEach((card) => {
+    const visible = assetCardMatches(card, filterId);
+    card.style.display = visible ? "" : "none";
+    if (visible) visibleCount += 1;
+  });
+
+  const existing = section.querySelector('[data-bust-empty-state="assets"]');
+  if (visibleCount > 0) {
+    existing?.remove();
+    return;
+  }
+
+  if (!existing) {
+    const empty = document.createElement("p");
+    empty.dataset.bustEmptyState = "assets";
+    empty.className = "mt-3 rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-600";
+    empty.textContent = "No hay assets en esta categoría.";
+    section.querySelector('[data-bust-filter-pills="assets"]')?.insertAdjacentElement("afterend", empty);
+  }
+}
+
 function addAssetFilters() {
-  const sections = findSectionsByText(["assets del cliente"]);
+  const sections = findSectionsByText(["assets del cliente"]).filter((section) => section.closest("aside"));
 
   sections.forEach((section) => {
     if (section.dataset.bustAssetFilterReady === "true") {
@@ -558,7 +515,14 @@ function addAssetFilters() {
       activeFilter: "all",
       onFilter: (filterId) => applyAssetFilter(section, filterId),
     });
-    insertFilterBeforeList(section, wrapper);
+
+    const firstList = Array.from(section.children).find((child) => {
+      if (!(child instanceof HTMLElement)) return false;
+      const className = child.className.toString();
+      return className.includes("mt-5") || className.includes("grid gap");
+    });
+
+    section.insertBefore(wrapper, firstList || section.children[2] || null);
     applyAssetFilter(section, "all");
   });
 }
@@ -566,41 +530,27 @@ function addAssetFilters() {
 function hideBriefControls() {
   if (!isGeneratorBriefPage()) return;
 
-  const allElements = Array.from(document.querySelectorAll("p, label, button, span, h2"));
-
-  allElements.forEach((element) => {
-    const text = element.textContent?.trim().toLowerCase() || "";
+  document.querySelectorAll("p, label, button, span, h2").forEach((element) => {
+    const text = normalizeText(element.textContent || "");
 
     if (text.includes("5. logo oficial opcional")) {
       const section = element.closest("section");
-      if (section instanceof HTMLElement) {
-        section.style.display = "none";
-        section.setAttribute("data-hidden-logo-brief-section", "true");
-      }
+      if (section instanceof HTMLElement) section.style.display = "none";
     }
 
     if (text === "logo visible") {
       const button = element.closest("button");
-      if (button instanceof HTMLElement) {
-        button.style.display = "none";
-        button.setAttribute("data-hidden-logo-visual-chip", "true");
-      }
+      if (button instanceof HTMLElement) button.style.display = "none";
     }
 
-    if (text.includes("motor de ia") || text.includes("selección del generador")) {
+    if (text.includes("motor de ia") || text.includes("seleccion del generador")) {
       const section = element.closest("section");
-      if (section instanceof HTMLElement) {
-        section.style.display = "none";
-        section.setAttribute("data-hidden-generator-model-section", "true");
-      }
+      if (section instanceof HTMLElement) section.style.display = "none";
     }
 
     if (text === "motor sugerido") {
       const card = element.closest("div");
-      if (card instanceof HTMLElement) {
-        card.style.display = "none";
-        card.setAttribute("data-hidden-suggested-model-card", "true");
-      }
+      if (card instanceof HTMLElement) card.style.display = "none";
     }
   });
 
@@ -615,6 +565,7 @@ export default function HideBriefLogoControls() {
 
     const observer = new MutationObserver(() => {
       hideBriefControls();
+      window.setTimeout(removeMainAreaTextFilters, 0);
     });
 
     observer.observe(document.body, {
