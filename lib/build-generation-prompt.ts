@@ -137,15 +137,20 @@ function logoPositionLabel(position?: string) {
   return map[position || ""] || "selected clean area";
 }
 
+function normalizeText(value?: string) {
+  return (value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 function sanitizeAttachmentNotes(notes?: string) {
   if (!notes?.trim()) {
     return "Use it as a visual reference for mood, atmosphere, composition, or product context without copying it directly.";
   }
 
-  const normalized = notes
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+  const normalized = normalizeText(notes);
 
   const mentionsWatermark =
     normalized.includes("marca de agua") ||
@@ -162,52 +167,62 @@ function sanitizeAttachmentNotes(notes?: string) {
 }
 
 function shouldRemoveLogoInstruction(rule: string) {
-  const normalized = rule
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+  const normalized = normalizeText(rule);
 
   const mentionsLogo = normalized.includes("logo") || normalized.includes("logotipo");
-  const asksToGenerateLogo =
+  const mentionsLogoPlacement =
     normalized.includes("integrar") ||
     normalized.includes("incluir") ||
     normalized.includes("agregar") ||
     normalized.includes("poner") ||
     normalized.includes("mostrar") ||
-    normalized.includes("presencia");
+    normalized.includes("presencia") ||
+    normalized.includes("colocar") ||
+    normalized.includes("espacio") ||
+    normalized.includes("reservado") ||
+    normalized.includes("overlay");
 
-  return mentionsLogo && asksToGenerateLogo;
+  return mentionsLogo && mentionsLogoPlacement;
 }
 
-function cleanRules(rules?: string[], logoOverlayEnabled = false) {
+function cleanRules(rules?: string[], removeLogoInstructions = false) {
   const clean = (rules || [])
     .map((rule) => rule.trim())
     .filter(Boolean)
-    .filter((rule) => !logoOverlayEnabled || !shouldRemoveLogoInstruction(rule));
+    .filter((rule) => !removeLogoInstructions || !shouldRemoveLogoInstruction(rule));
 
   return Array.from(new Set(clean));
 }
 
-function buildTextBlocksText(data: BuildPromptInput) {
-  const blocks = (data.textBlocks || [])
+function getOfficialTextBlocks(data: BuildPromptInput) {
+  return (data.textBlocks || [])
     .map((block) => ({
       text: block.text?.trim() || "",
-      role: block.roleLabel || textBlockRoleLabel(block.role),
-      priority: block.priorityLabel || textBlockPriorityLabel(block.priority),
+      role: block.role || "free",
+      roleLabel: block.roleLabel || textBlockRoleLabel(block.role),
+      priorityLabel: block.priorityLabel || textBlockPriorityLabel(block.priority),
       instruction: block.instruction?.trim() || "",
       locked: block.locked !== false,
     }))
     .filter((block) => block.text.length > 0);
+}
+
+function blockHasRole(blocks: ReturnType<typeof getOfficialTextBlocks>, roles: string[]) {
+  return blocks.some((block) => roles.includes(block.role));
+}
+
+function buildTextBlocksText(data: BuildPromptInput) {
+  const blocks = getOfficialTextBlocks(data);
 
   if (blocks.length > 0) {
     return blocks
       .map((block, index) => {
         const exactRule = block.locked
-          ? "Use this text EXACTLY as written. Do not rewrite, translate, correct, abbreviate, or add words to it."
+          ? "Use this text EXACTLY as written. Do not rewrite, translate, correct, abbreviate, change capitalization, fix spelling, or add words to it."
           : "You may adapt hierarchy and placement, but keep the meaning aligned with the text.";
         const instruction = block.instruction ? ` Specific instruction: ${block.instruction}` : "";
 
-        return `${index + 1}. Text: "${block.text}" | Visual role: ${block.role} | Priority: ${block.priority}. ${exactRule}${instruction}`;
+        return `${index + 1}. Text: "${block.text}" | Visual role: ${block.roleLabel} | Priority: ${block.priorityLabel}. ${exactRule}${instruction}`;
       })
       .join("\n");
   }
@@ -220,6 +235,42 @@ function buildTextBlocksText(data: BuildPromptInput) {
   ].filter(Boolean);
 
   return legacyBlocks.length ? legacyBlocks.join("\n") : "No required in-image text blocks were specified.";
+}
+
+function buildVisualElementsText(data: BuildPromptInput) {
+  const blocks = getOfficialTextBlocks(data);
+  const omitted: string[] = [];
+  const filteredElements = (data.selectedVisualElements || []).filter((element) => {
+    const normalized = normalizeText(element);
+
+    if (normalized.includes("logo")) {
+      omitted.push(element);
+      return false;
+    }
+
+    if (normalized === "fecha" && !blockHasRole(blocks, ["date"])) {
+      omitted.push(element);
+      return false;
+    }
+
+    if (normalized === "precio" && !blockHasRole(blocks, ["price", "promotion"])) {
+      omitted.push(element);
+      return false;
+    }
+
+    if (normalized === "cta" && !blockHasRole(blocks, ["cta"])) {
+      omitted.push(element);
+      return false;
+    }
+
+    return true;
+  });
+
+  const baseText = filteredElements.length ? filteredElements.join(", ") : "Not specified";
+
+  if (!omitted.length) return baseText;
+
+  return `${baseText}\n- Do NOT include these text-dependent elements because no official text block was provided for them: ${omitted.join(", ")}. Do not invent dates, prices, CTAs, logos, brand marks, or extra text.`;
 }
 
 export function buildGenerationPrompt(data: BuildPromptInput) {
@@ -240,10 +291,10 @@ export function buildGenerationPrompt(data: BuildPromptInput) {
       : "No specific request attachments.";
 
   const logoOverlayText = logoOverlayEnabled
-    ? `The official logo must NOT be generated by the AI. Generate the design without any logo. Leave clean visual space in the ${logoPositionLabel(
+    ? `The official logo must NOT be generated by the AI. Generate the design without any logo, brand mark, monogram, top-center brand lockup, fake emblem, or brand-name logo. Leave clean visual space in the ${logoPositionLabel(
         data.logoOverlay?.position,
       )}. The system will place the real official logo after image generation as a fixed overlay layer. Do not create logo placeholders, white boxes, frames, fake marks, brand-name labels, or the word LOGO.`
-    : "No logo overlay requested. Do not force a logo into the design unless the brief explicitly asks for brand text as normal campaign copy.";
+    : "No logo overlay requested. Do NOT include any logo, brand mark, monogram, top-center brand lockup, big brand initial, fake emblem, or brand-name logo. Use the brand only through colors, mood, layout, and visual style. Only include the brand name if it is listed as an official text block.";
 
   const assetsText =
     data.selectedAssetsSnapshot?.length
@@ -260,7 +311,8 @@ export function buildGenerationPrompt(data: BuildPromptInput) {
       : "No general brand visual assets selected.";
 
   const textBlocksText = buildTextBlocksText(data);
-  const cleanDos = cleanRules(data.brandBrainSnapshot?.dos, logoOverlayEnabled);
+  const visualElementsText = buildVisualElementsText(data);
+  const cleanDos = cleanRules(data.brandBrainSnapshot?.dos, true);
   const cleanDonts = cleanRules(data.brandBrainSnapshot?.donts, false);
 
   const dos = cleanDos.length
@@ -290,9 +342,7 @@ ${textBlocksText}
 
 VISUAL / EMOTIONAL DIRECTION
 - Must transmit: ${data.selectedEmotions?.join(", ") || "Not specified"}
-- Must include visually: ${
-    data.selectedVisualElements?.join(", ") || "Not specified"
-  }
+- Must include visually: ${visualElementsText}
 - Extra instructions: ${data.specificInstructions || "None"}
 
 SPECIFIC ATTACHMENTS FOR THIS PIECE
@@ -332,6 +382,7 @@ ART DIRECTION RULES
 - If a specific product, dish, or object attachment is provided, prioritize it visually and make it feel integrated into the design.
 - If a visual reference contains text, treat that text as layout/style inspiration only unless it exactly matches one of the official text blocks above.
 - If a logo overlay is requested, only reserve natural visual breathing room in the requested area. Never create a visible logo placeholder, white box, label, or fake logo area.
+- If no logo overlay is requested, do not reserve a logo area and do not create any logo-like lockup.
 - Keep the communication instantly understandable at a glance.
 - Respect the brand style, emotional tone, and commercial objective.
 - Avoid random decorative clutter that does not reinforce the message.
@@ -340,8 +391,11 @@ TEXT RULES
 - Use only the official text blocks listed above when placing text inside the image.
 - Do not force every block to appear at the same size; use hierarchy based on priority.
 - Do not invent extra words, numbers, dates, product names, or claims.
-- Do not add any logo text, brand-name placeholder, or logo label.
-- If a block is marked exact, it must appear exactly as written.
+- Do not include a date unless there is an official text block with role date.
+- Do not include a price unless there is an official text block with role price or promotion.
+- Do not include a CTA unless there is an official text block with role CTA.
+- Do not add any logo text, brand-name placeholder, brand-name header, monogram, or logo label.
+- If a block is marked exact, it must appear exactly as written, including accents, spelling, punctuation, and capitalization.
 - If text appears inside the image, it must be clean, legible, and placed with clear hierarchy.
 
 BRAND SAFETY RULES
