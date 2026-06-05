@@ -299,9 +299,11 @@ function removeMainPills() {
   sectionsContaining("1. selecciona la marca").concat(sectionsContaining("3. mensaje y bloques de texto")).forEach((section) => {
     Array.from(section.children).forEach((child) => {
       if (!(child instanceof HTMLElement) || child.closest("aside")) return;
+      if (child.querySelector("textarea, select, input")) return;
       const text = n(child.textContent || "");
       const count = textFilters.filter(([, label]) => text.includes(n(label))).length;
-      if (count >= 4) child.remove();
+      const buttons = child.querySelectorAll("button").length;
+      if (count >= 4 && buttons >= 4) child.remove();
     });
   });
 }
