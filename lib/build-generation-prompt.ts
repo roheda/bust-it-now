@@ -5,6 +5,16 @@ export type BuildPromptInput = {
   goal?: string;
   contentType?: string;
   mainMessage?: string;
+  textBlocks?: Array<{
+    id?: string;
+    text?: string;
+    role?: string;
+    roleLabel?: string;
+    priority?: string;
+    priorityLabel?: string;
+    instruction?: string;
+    locked?: boolean;
+  }>;
   copy?: {
     headline?: string;
     subheadline?: string;
@@ -86,6 +96,35 @@ function attachmentRoleLabel(role?: string) {
   return map[role || ""] || role || "specific reference";
 }
 
+function textBlockRoleLabel(role?: string) {
+  const map: Record<string, string> = {
+    headline: "main headline",
+    subheadline: "secondary phrase",
+    claim: "campaign claim",
+    badge: "badge or sticker",
+    bullet: "bullet point",
+    price: "price",
+    promotion: "promotion",
+    cta: "call to action",
+    date: "date",
+    location: "location",
+    disclaimer: "disclaimer",
+    free: "free text",
+  };
+
+  return map[role || ""] || role || "text block";
+}
+
+function textBlockPriorityLabel(priority?: string) {
+  const map: Record<string, string> = {
+    high: "high priority",
+    medium: "medium priority",
+    low: "low priority",
+  };
+
+  return map[priority || ""] || priority || "medium priority";
+}
+
 function logoPositionLabel(position?: string) {
   const map: Record<string, string> = {
     "top-left": "top-left corner",
@@ -149,6 +188,40 @@ function cleanRules(rules?: string[], logoOverlayEnabled = false) {
   return Array.from(new Set(clean));
 }
 
+function buildTextBlocksText(data: BuildPromptInput) {
+  const blocks = (data.textBlocks || [])
+    .map((block) => ({
+      text: block.text?.trim() || "",
+      role: block.roleLabel || textBlockRoleLabel(block.role),
+      priority: block.priorityLabel || textBlockPriorityLabel(block.priority),
+      instruction: block.instruction?.trim() || "",
+      locked: block.locked !== false,
+    }))
+    .filter((block) => block.text.length > 0);
+
+  if (blocks.length > 0) {
+    return blocks
+      .map((block, index) => {
+        const exactRule = block.locked
+          ? "Use this text EXACTLY as written. Do not rewrite, translate, correct, abbreviate, or add words to it."
+          : "You may adapt hierarchy and placement, but keep the meaning aligned with the text.";
+        const instruction = block.instruction ? ` Specific instruction: ${block.instruction}` : "";
+
+        return `${index + 1}. Text: "${block.text}" | Visual role: ${block.role} | Priority: ${block.priority}. ${exactRule}${instruction}`;
+      })
+      .join("\n");
+  }
+
+  const legacyBlocks = [
+    data.copy?.headline ? `1. Text: "${data.copy.headline}" | Visual role: main headline | Priority: high priority. Use this text EXACTLY as written.` : "",
+    data.copy?.subheadline ? `2. Text: "${data.copy.subheadline}" | Visual role: secondary phrase | Priority: medium priority. Use this text EXACTLY as written.` : "",
+    data.copy?.priceOrOffer ? `3. Text: "${data.copy.priceOrOffer}" | Visual role: price or promotion | Priority: high priority. Use this text EXACTLY as written.` : "",
+    data.copy?.cta ? `4. Text: "${data.copy.cta}" | Visual role: call to action | Priority: low priority. Use this text EXACTLY as written.` : "",
+  ].filter(Boolean);
+
+  return legacyBlocks.length ? legacyBlocks.join("\n") : "No required in-image text blocks were specified.";
+}
+
 export function buildGenerationPrompt(data: BuildPromptInput) {
   const logoOverlayEnabled = data.logoOverlay?.enabled === true;
 
@@ -181,13 +254,12 @@ export function buildGenerationPrompt(data: BuildPromptInput) {
               : "";
             const notes = asset.notes ? ` Notes: ${sanitizeAttachmentNotes(asset.notes)}.` : "";
 
-            return `${index + 1}. ${asset.name || "Asset"} (${
-              asset.type || "asset"
-            }${asset.category ? ` / ${asset.category}` : ""}).${tags}${notes}`;
+            return `${index + 1}. ${asset.name || "Asset"} (${asset.type || "asset"}${asset.category ? ` / ${asset.category}` : ""}).${tags}${notes}`;
           })
           .join("\n")
       : "No general brand visual assets selected.";
 
+  const textBlocksText = buildTextBlocksText(data);
   const cleanDos = cleanRules(data.brandBrainSnapshot?.dos, logoOverlayEnabled);
   const cleanDonts = cleanRules(data.brandBrainSnapshot?.donts, false);
 
@@ -211,10 +283,10 @@ PROJECT CONTEXT
 
 MAIN COMMUNICATION
 - Main message: ${data.mainMessage || ""}
-- Headline inside image: ${data.copy?.headline || "Not specified"}
-- Subheadline inside image: ${data.copy?.subheadline || "Not specified"}
-- Price or offer: ${data.copy?.priceOrOffer || "Not specified"}
-- CTA: ${data.copy?.cta || "Not specified"}
+
+TEXT BLOCKS TO USE IN THE DESIGN
+These are the official text blocks for this piece. Treat them as flexible design elements, not as a fixed template. Arrange them dynamically according to role, priority, and visual hierarchy.
+${textBlocksText}
 
 VISUAL / EMOTIONAL DIRECTION
 - Must transmit: ${data.selectedEmotions?.join(", ") || "Not specified"}
@@ -258,15 +330,18 @@ ART DIRECTION RULES
 - Create visual depth, deliberate hierarchy, premium finishing, and an intentional composition.
 - Use strong focal points, background treatment, subtle lighting, shadows, and graphic systems that support the message.
 - If a specific product, dish, or object attachment is provided, prioritize it visually and make it feel integrated into the design.
+- If a visual reference contains text, treat that text as layout/style inspiration only unless it exactly matches one of the official text blocks above.
 - If a logo overlay is requested, only reserve natural visual breathing room in the requested area. Never create a visible logo placeholder, white box, label, or fake logo area.
 - Keep the communication instantly understandable at a glance.
 - Respect the brand style, emotional tone, and commercial objective.
 - Avoid random decorative clutter that does not reinforce the message.
 
 TEXT RULES
-- Only include the exact headline, subheadline, offer, and CTA provided above when they are specified.
+- Use only the official text blocks listed above when placing text inside the image.
+- Do not force every block to appear at the same size; use hierarchy based on priority.
 - Do not invent extra words, numbers, dates, product names, or claims.
 - Do not add any logo text, brand-name placeholder, or logo label.
+- If a block is marked exact, it must appear exactly as written.
 - If text appears inside the image, it must be clean, legible, and placed with clear hierarchy.
 
 BRAND SAFETY RULES
