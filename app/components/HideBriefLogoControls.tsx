@@ -15,564 +15,350 @@ type ClientTextBlock = {
   locked: boolean;
 };
 
-const textBlockFilters = [
-  { id: "all", label: "Todos" },
-  { id: "headline", label: "Titulares" },
-  { id: "subheadline", label: "Secundarios" },
-  { id: "claim", label: "Claims" },
-  { id: "badge", label: "Badges" },
-  { id: "bullet", label: "Bullets" },
-  { id: "promo", label: "Precio / promo" },
-  { id: "cta", label: "CTA" },
-  { id: "date", label: "Fecha" },
-  { id: "location", label: "Ubicación" },
-  { id: "disclaimer", label: "Disclaimer" },
-  { id: "free", label: "Libres" },
-];
+const textFilters = [
+  ["all", "Todos"],
+  ["headline", "Titulares"],
+  ["subheadline", "Secundarios"],
+  ["claim", "Claims"],
+  ["badge", "Badges"],
+  ["bullet", "Bullets"],
+  ["promo", "Precio / promo"],
+  ["cta", "CTA"],
+  ["date", "Fecha"],
+  ["location", "Ubicación"],
+  ["disclaimer", "Disclaimer"],
+  ["free", "Libres"],
+] as const;
 
 const assetFilters = [
-  { id: "all", label: "Todos" },
-  { id: "logo", label: "Logos" },
-  { id: "reference", label: "Referencias" },
-  { id: "product", label: "Producto" },
-  { id: "element", label: "Elementos" },
-  { id: "stock", label: "Stock" },
-  { id: "featured", label: "Destacados" },
-];
+  ["all", "Todos"],
+  ["logo", "Logos"],
+  ["reference", "Referencias"],
+  ["product", "Producto"],
+  ["element", "Elementos"],
+  ["stock", "Stock"],
+  ["featured", "Destacados"],
+] as const;
 
-const clientBlockCache = new Map<string, ClientTextBlock[]>();
-const observedClientSelects = new WeakSet<HTMLSelectElement>();
-let renderedLibraryClientId = "";
-let pendingClearClientId = "";
+const cache = new Map<string, ClientTextBlock[]>();
+const watchedSelects = new WeakSet<HTMLSelectElement>();
+let currentLibraryClientId = "";
+let clearForClientId = "";
 
-function normalizeText(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+function n(value: string) {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
-function isGeneratorBriefPage() {
-  if (typeof window === "undefined") return false;
-  const pathname = window.location.pathname;
-  return pathname === "/dashboard/generador" || pathname.startsWith("/dashboard/generador/editar/");
+function isBriefPage() {
+  const path = window.location.pathname;
+  return path === "/dashboard/generador" || path.startsWith("/dashboard/generador/editar/");
 }
 
-function pillClass(active: boolean) {
+function sectionsContaining(text: string) {
+  const needle = n(text);
+  return Array.from(document.querySelectorAll("section")).filter((section): section is HTMLElement => n(section.textContent || "").includes(needle));
+}
+
+function activeBlocksSection() {
+  return sectionsContaining("3. mensaje y bloques de texto").find((section) => section.querySelector("textarea")) || null;
+}
+
+function sidebarAssetSection() {
+  return sectionsContaining("assets del cliente").find((section) => section.closest("aside")) || null;
+}
+
+function clientSelect() {
+  const byId = document.getElementById("client-select");
+  if (byId instanceof HTMLSelectElement) return byId;
+  return Array.from(document.querySelectorAll("form select")).find((select) =>
+    Array.from(select.options).some((option) => n(option.textContent || "").includes("selecciona un cliente")),
+  ) || null;
+}
+
+function buttonClass(active: boolean) {
   return active
     ? "rounded-full bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition"
     : "rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50";
 }
 
-function setActivePill(wrapper: HTMLElement, activeFilter: string) {
-  wrapper.querySelectorAll("button[data-filter-id]").forEach((button) => {
-    if (button instanceof HTMLButtonElement) {
-      button.className = pillClass(button.dataset.filterId === activeFilter);
-    }
-  });
-}
-
-function createFilterWrapper({
-  kind,
-  options,
-  activeFilter,
-  onFilter,
-}: {
-  kind: "assets" | "client-library";
-  options: Array<{ id: string; label: string }>;
-  activeFilter: string;
-  onFilter: (filterId: string) => void;
-}) {
-  const wrapper = document.createElement("div");
-  wrapper.dataset.bustFilterPills = kind;
-  wrapper.className = "my-4 flex flex-wrap gap-2";
-
-  options.forEach((option) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.filterId = option.id;
-    button.className = pillClass(option.id === activeFilter);
-    button.textContent = option.label;
-    button.addEventListener("click", () => {
-      onFilter(option.id);
-      setActivePill(wrapper, option.id);
-    });
-    wrapper.appendChild(button);
-  });
-
-  return wrapper;
-}
-
-function findSectionsByText(patterns: string[]) {
-  const normalizedPatterns = patterns.map(normalizeText);
-  return Array.from(document.querySelectorAll("section")).filter((section): section is HTMLElement => {
-    const text = normalizeText(section.textContent || "");
-    return normalizedPatterns.some((pattern) => text.includes(pattern));
-  });
-}
-
-function getActiveTextBlockSection() {
-  return findSectionsByText(["3. mensaje y bloques de texto"]).find((section) => section.querySelector("textarea")) || null;
-}
-
-function getSidebarAssetSection() {
-  return findSectionsByText(["assets del cliente"]).find((section) => section.closest("aside")) || null;
-}
-
-function getClientSelect() {
-  const direct = document.getElementById("client-select");
-  if (direct instanceof HTMLSelectElement) return direct;
-
-  const form = document.querySelector("form");
-  if (!form) return null;
-
-  const selects = Array.from(form.querySelectorAll("select"));
-  return (
-    selects.find((select) =>
-      Array.from(select.options).some((option) => normalizeText(option.textContent || "").includes("selecciona un cliente")),
-    ) ||
-    selects[0] ||
-    null
-  );
-}
-
-function sectionChildrenWithFilterPills(section: HTMLElement) {
-  return Array.from(section.children).filter((child): child is HTMLElement => {
-    if (!(child instanceof HTMLElement)) return false;
-    const text = normalizeText(child.textContent || "");
-    const filterHits = textBlockFilters.filter((filter) => text.includes(normalizeText(filter.label))).length;
-    return filterHits >= 4 && !child.closest("aside");
-  });
-}
-
-function removeMainAreaTextFilters() {
-  document
-    .querySelectorAll('[data-bust-filter-pills="text-blocks"], [data-bust-empty-state="text-blocks"]')
-    .forEach((element) => element.remove());
-
-  document.querySelectorAll('[data-bust-filter-pills="client-library"]').forEach((element) => {
-    if (!element.closest("aside")) element.remove();
-  });
-
-  findSectionsByText(["1. selecciona la marca", "3. mensaje y bloques de texto"]).forEach((section) => {
-    sectionChildrenWithFilterPills(section).forEach((element) => element.remove());
-  });
-}
-
-function findTextBlockCards(section: HTMLElement) {
-  return Array.from(section.querySelectorAll("div.rounded-2xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
-    if (!(card instanceof HTMLElement)) return false;
-    if (card.closest("[data-bust-client-block-library]")) return false;
-    const text = normalizeText(card.textContent || "");
-    return text.includes("bloque") && !text.includes("que debe entender la persona en 3 segundos");
-  });
-}
-
-function setFieldValue(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
-  const prototype = element instanceof HTMLTextAreaElement
-    ? HTMLTextAreaElement.prototype
-    : element instanceof HTMLSelectElement
-      ? HTMLSelectElement.prototype
-      : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-  setter?.call(element, value);
-  element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
-  element.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
-function setCheckboxValue(element: HTMLInputElement, checked: boolean) {
-  if (element.checked !== checked) element.click();
-}
-
-function fillTextBlockCard(card: HTMLElement, block: ClientTextBlock) {
-  const textarea = card.querySelector("textarea");
-  if (textarea instanceof HTMLTextAreaElement) setFieldValue(textarea, block.text);
-
-  const selects = Array.from(card.querySelectorAll("select"));
-  if (selects[0]) setFieldValue(selects[0], block.role || "free");
-  if (selects[1]) setFieldValue(selects[1], block.priority || "medium");
-
-  const instructionInput = Array.from(card.querySelectorAll("input")).find((input) => input.type !== "checkbox");
-  if (instructionInput instanceof HTMLInputElement) setFieldValue(instructionInput, block.instruction || "");
-
-  const lockedInput = Array.from(card.querySelectorAll("input")).find((input) => input.type === "checkbox");
-  if (lockedInput instanceof HTMLInputElement) setCheckboxValue(lockedInput, block.locked !== false);
-}
-
-function textBlockCardIsEmpty(card: HTMLElement) {
-  const textarea = card.querySelector("textarea");
-  return textarea instanceof HTMLTextAreaElement && textarea.value.trim().length === 0;
-}
-
-function findAddTextBlockButton(section: HTMLElement) {
-  return Array.from(section.querySelectorAll("button")).find((button): button is HTMLButtonElement => {
-    return normalizeText(button.textContent || "").includes("agregar bloque");
-  }) || null;
-}
-
-function addBlockToActiveBrief(block: ClientTextBlock) {
-  const section = getActiveTextBlockSection();
-  if (!section) return;
-
-  const cards = findTextBlockCards(section);
-  const emptyCard = cards.find(textBlockCardIsEmpty);
-
-  if (emptyCard) {
-    fillTextBlockCard(emptyCard, block);
-    removeMainAreaTextFilters();
-    return;
-  }
-
-  findAddTextBlockButton(section)?.click();
-  window.setTimeout(() => {
-    const updatedCards = findTextBlockCards(section);
-    const targetCard = updatedCards[updatedCards.length - 1];
-    if (targetCard) fillTextBlockCard(targetCard, block);
-    removeMainAreaTextFilters();
-  }, 80);
-}
-
-function clearActiveTextBlocks() {
-  const section = getActiveTextBlockSection();
-  if (!section) return;
-
-  findTextBlockCards(section).forEach((card) => {
-    const removeButton = Array.from(card.querySelectorAll("button")).find((button): button is HTMLButtonElement => {
-      return normalizeText(button.textContent || "").includes("quitar");
-    });
-    removeButton?.click();
-  });
-
-  window.setTimeout(() => {
-    findTextBlockCards(section).forEach((card) => {
-      const textarea = card.querySelector("textarea");
-      if (textarea instanceof HTMLTextAreaElement) setFieldValue(textarea, "");
-
-      const selects = Array.from(card.querySelectorAll("select"));
-      if (selects[0]) setFieldValue(selects[0], "headline");
-      if (selects[1]) setFieldValue(selects[1], "high");
-
-      const instructionInput = Array.from(card.querySelectorAll("input")).find((input) => input.type !== "checkbox");
-      if (instructionInput instanceof HTMLInputElement) setFieldValue(instructionInput, "");
-
-      const lockedInput = Array.from(card.querySelectorAll("input")).find((input) => input.type === "checkbox");
-      if (lockedInput instanceof HTMLInputElement) setCheckboxValue(lockedInput, true);
-    });
-    removeMainAreaTextFilters();
-  }, 120);
-}
-
-function normalizeClientTextBlocks(value: unknown): ClientTextBlock[] {
+function normalizeBlocks(value: unknown): ClientTextBlock[] {
   if (!Array.isArray(value)) return [];
+  const result: ClientTextBlock[] = [];
 
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const block = item as Partial<ClientTextBlock>;
-      const text = typeof block.text === "string" ? block.text.trim() : "";
-      if (!text) return null;
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const source = item as Partial<ClientTextBlock>;
+    const text = typeof source.text === "string" ? source.text.trim() : "";
+    if (!text) return;
 
-      return {
-        id: typeof block.id === "string" && block.id ? block.id : `library-${Math.random().toString(36).slice(2, 8)}`,
-        text,
-        role: typeof block.role === "string" ? block.role : "free",
-        roleLabel: typeof block.roleLabel === "string" ? block.roleLabel : "Texto libre",
-        priority: typeof block.priority === "string" ? block.priority : "medium",
-        priorityLabel: typeof block.priorityLabel === "string" ? block.priorityLabel : "Media",
-        instruction: typeof block.instruction === "string" ? block.instruction : "",
-        locked: block.locked !== false,
-      } satisfies ClientTextBlock;
-    })
-    .filter((block): block is ClientTextBlock => Boolean(block));
+    result.push({
+      id: typeof source.id === "string" && source.id ? source.id : `block-${Math.random().toString(36).slice(2, 8)}`,
+      text,
+      role: typeof source.role === "string" ? source.role : "free",
+      roleLabel: typeof source.roleLabel === "string" ? source.roleLabel : "Texto libre",
+      priority: typeof source.priority === "string" ? source.priority : "medium",
+      priorityLabel: typeof source.priorityLabel === "string" ? source.priorityLabel : "Media",
+      instruction: typeof source.instruction === "string" ? source.instruction : "",
+      locked: source.locked !== false,
+    });
+  });
+
+  return result;
 }
 
-async function loadClientTextBlocks(clientId: string) {
-  if (clientBlockCache.has(clientId)) return clientBlockCache.get(clientId) || [];
-  const snapshot = await getDoc(doc(db, "clients", clientId));
-  const blocks = snapshot.exists() ? normalizeClientTextBlocks(snapshot.data().textBlocks) : [];
-  clientBlockCache.set(clientId, blocks);
+async function loadBlocks(clientId: string) {
+  if (cache.has(clientId)) return cache.get(clientId) || [];
+  const snap = await getDoc(doc(db, "clients", clientId));
+  const blocks = snap.exists() ? normalizeBlocks(snap.data().textBlocks) : [];
+  cache.set(clientId, blocks);
   return blocks;
 }
 
-function libraryCardMatches(card: HTMLElement, filterId: string) {
-  if (filterId === "all") return true;
-  const role = card.dataset.blockRole || "";
-  if (filterId === "promo") return role === "price" || role === "promotion";
-  return role === filterId;
+function setField(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+  el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-function applyLibraryFilter(wrapper: HTMLElement, filterId: string) {
-  const cards = Array.from(wrapper.querySelectorAll("[data-library-block-card]")).filter((card): card is HTMLElement => card instanceof HTMLElement);
-  let visibleCount = 0;
-
-  cards.forEach((card) => {
-    const visible = libraryCardMatches(card, filterId);
-    card.style.display = visible ? "" : "none";
-    if (visible) visibleCount += 1;
+function blockCards() {
+  const section = activeBlocksSection();
+  if (!section) return [];
+  return Array.from(section.querySelectorAll("div.rounded-2xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
+    if (!(card instanceof HTMLElement)) return false;
+    if (card.closest("[data-client-block-library]")) return false;
+    const text = n(card.textContent || "");
+    return text.includes("bloque") && !text.includes("que debe entender");
   });
-
-  const empty = wrapper.querySelector("[data-library-empty-state]");
-  if (empty instanceof HTMLElement) empty.style.display = visibleCount > 0 ? "none" : "";
 }
 
-function renderClientBlockLibrary(clientId: string, blocks: ClientTextBlock[]) {
-  const assetSection = getSidebarAssetSection();
-  const sidebar = assetSection?.parentElement;
-  if (!assetSection || !sidebar) return;
+function fillBlock(card: HTMLElement, block: ClientTextBlock) {
+  const textarea = card.querySelector("textarea");
+  if (textarea instanceof HTMLTextAreaElement) setField(textarea, block.text);
+  const selects = Array.from(card.querySelectorAll("select"));
+  if (selects[0]) setField(selects[0], block.role);
+  if (selects[1]) setField(selects[1], block.priority);
+  const note = Array.from(card.querySelectorAll("input")).find((input) => input.type !== "checkbox");
+  if (note instanceof HTMLInputElement) setField(note, block.instruction);
+  const locked = Array.from(card.querySelectorAll("input")).find((input) => input.type === "checkbox");
+  if (locked instanceof HTMLInputElement && locked.checked !== block.locked) locked.click();
+}
 
-  document.querySelectorAll("[data-bust-client-block-library]").forEach((element) => element.remove());
-  renderedLibraryClientId = clientId;
+function useBlock(block: ClientTextBlock) {
+  const empty = blockCards().find((card) => {
+    const area = card.querySelector("textarea");
+    return area instanceof HTMLTextAreaElement && area.value.trim() === "";
+  });
+  if (empty) {
+    fillBlock(empty, block);
+    return;
+  }
+  const add = Array.from(document.querySelectorAll("button")).find((button) => n(button.textContent || "").includes("agregar bloque"));
+  if (add instanceof HTMLButtonElement) add.click();
+  window.setTimeout(() => {
+    const cards = blockCards();
+    const last = cards[cards.length - 1];
+    if (last) fillBlock(last, block);
+  }, 80);
+}
 
-  const wrapper = document.createElement("section");
-  wrapper.dataset.bustClientBlockLibrary = "true";
-  wrapper.className = "rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8";
+function clearBlocks() {
+  blockCards().forEach((card) => {
+    const remove = Array.from(card.querySelectorAll("button")).find((button) => n(button.textContent || "").includes("quitar"));
+    if (remove instanceof HTMLButtonElement) remove.click();
+  });
+  window.setTimeout(() => {
+    blockCards().forEach((card) => {
+      const area = card.querySelector("textarea");
+      if (area instanceof HTMLTextAreaElement) setField(area, "");
+    });
+  }, 120);
+}
+
+function makePills(filters: readonly (readonly [string, string])[], onClick: (id: string) => void) {
+  const wrap = document.createElement("div");
+  wrap.className = "my-4 flex flex-wrap gap-2";
+  filters.forEach(([id, label], index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = buttonClass(index === 0);
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      Array.from(wrap.querySelectorAll("button")).forEach((item) => {
+        if (item instanceof HTMLButtonElement) item.className = buttonClass(item === button);
+      });
+      onClick(id);
+    });
+    wrap.appendChild(button);
+  });
+  return wrap;
+}
+
+function showLibrary(clientId: string, blocks: ClientTextBlock[]) {
+  const assetSection = sidebarAssetSection();
+  const aside = assetSection?.parentElement;
+  if (!assetSection || !aside) return;
+
+  document.querySelectorAll("[data-client-block-library]").forEach((el) => el.remove());
+  currentLibraryClientId = clientId;
+
+  const section = document.createElement("section");
+  section.dataset.clientBlockLibrary = "true";
+  section.className = "rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8";
 
   const title = document.createElement("p");
   title.className = "text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500";
   title.textContent = "Bloques del cliente";
-  wrapper.appendChild(title);
-
   const heading = document.createElement("h2");
   heading.className = "mt-2 text-2xl font-semibold tracking-tight";
   heading.textContent = "Elegir textos";
-  wrapper.appendChild(heading);
-
-  const description = document.createElement("p");
-  description.className = "mt-2 text-sm leading-6 text-zinc-600";
-  description.textContent = "Elige cuáles bloques guardados quieres usar en este brief. No se agregan automáticamente.";
-  wrapper.appendChild(description);
-
-  const filterWrapper = createFilterWrapper({
-    kind: "client-library",
-    options: textBlockFilters,
-    activeFilter: "all",
-    onFilter: (filterId) => applyLibraryFilter(wrapper, filterId),
-  });
-  wrapper.appendChild(filterWrapper);
+  const desc = document.createElement("p");
+  desc.className = "mt-2 text-sm leading-6 text-zinc-600";
+  desc.textContent = "Elige cuáles bloques guardados quieres usar en este brief. No se agregan automáticamente.";
+  section.append(title, heading, desc);
 
   const list = document.createElement("div");
   list.className = "mt-4 grid gap-3";
-  wrapper.appendChild(list);
+
+  const applyFilter = (filter: string) => {
+    let visible = 0;
+    list.querySelectorAll("[data-block-role]").forEach((card) => {
+      if (!(card instanceof HTMLElement)) return;
+      const role = card.dataset.blockRole || "";
+      const match = filter === "all" || role === filter || (filter === "promo" && (role === "price" || role === "promotion"));
+      card.style.display = match ? "" : "none";
+      if (match) visible += 1;
+    });
+    const empty = list.querySelector("[data-empty]");
+    if (empty instanceof HTMLElement) empty.style.display = visible ? "none" : "";
+  };
+
+  section.appendChild(makePills(textFilters, applyFilter));
 
   const empty = document.createElement("p");
-  empty.dataset.libraryEmptyState = "true";
+  empty.dataset.empty = "true";
   empty.className = "rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-600";
-  empty.textContent = blocks.length > 0 ? "No hay bloques guardados para este filtro." : "Este cliente todavía no tiene bloques guardados.";
+  empty.textContent = blocks.length ? "No hay bloques guardados para este filtro." : "Este cliente todavía no tiene bloques guardados.";
   list.appendChild(empty);
 
   blocks.forEach((block) => {
     const card = document.createElement("div");
-    card.dataset.libraryBlockCard = "true";
     card.dataset.blockRole = block.role;
     card.className = "rounded-2xl border border-zinc-200 bg-zinc-50 p-3";
-
-    const meta = document.createElement("div");
-    meta.className = "mb-2 flex flex-wrap gap-2";
-    meta.innerHTML = `<span class="rounded-full bg-zinc-950 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">${block.roleLabel || block.role}</span><span class="rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-700">${block.priorityLabel || block.priority}</span>${block.locked ? `<span class="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">Exacto</span>` : ""}`;
-    card.appendChild(meta);
-
+    const meta = document.createElement("p");
+    meta.className = "text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500";
+    meta.textContent = `${block.roleLabel || block.role} · ${block.priorityLabel || block.priority}${block.locked ? " · Exacto" : ""}`;
     const text = document.createElement("p");
-    text.className = "text-sm font-semibold leading-6 text-zinc-950";
+    text.className = "mt-2 text-sm font-semibold leading-6 text-zinc-950";
     text.textContent = block.text;
-    card.appendChild(text);
-
-    if (block.instruction) {
-      const instruction = document.createElement("p");
-      instruction.className = "mt-1 text-xs leading-5 text-zinc-500";
-      instruction.textContent = block.instruction;
-      card.appendChild(instruction);
-    }
-
     const button = document.createElement("button");
     button.type = "button";
     button.className = "mt-3 inline-flex h-9 items-center justify-center rounded-2xl bg-zinc-950 px-3 text-xs font-semibold text-white transition hover:bg-zinc-800";
     button.textContent = "+ Usar en este brief";
-    button.addEventListener("click", () => addBlockToActiveBrief(block));
-    card.appendChild(button);
-
+    button.addEventListener("click", () => useBlock(block));
+    card.append(meta, text, button);
     list.appendChild(card);
   });
 
-  empty.style.display = blocks.length > 0 ? "none" : "";
-  sidebar.insertBefore(wrapper, assetSection);
-  removeMainAreaTextFilters();
+  empty.style.display = blocks.length ? "none" : "";
+  section.appendChild(list);
+  aside.insertBefore(section, assetSection);
 }
 
-async function syncClientBlockLibrary(clientId: string, shouldClearActiveBlocks: boolean) {
+async function syncLibrary(clientId: string, shouldClear: boolean) {
   if (!clientId) return;
-
-  try {
-    const blocks = await loadClientTextBlocks(clientId);
-    renderClientBlockLibrary(clientId, blocks);
-
-    if (shouldClearActiveBlocks) {
-      window.setTimeout(() => {
-        clearActiveTextBlocks();
-        pendingClearClientId = "";
-      }, 160);
-    }
-  } catch (error) {
-    console.error(error);
+  const blocks = await loadBlocks(clientId);
+  showLibrary(clientId, blocks);
+  if (shouldClear) {
+    window.setTimeout(() => {
+      clearBlocks();
+      clearForClientId = "";
+    }, 160);
   }
 }
 
-function watchClientSelector() {
-  const select = getClientSelect();
+function watchClientSelect() {
+  const select = clientSelect();
   if (!select) return;
-
-  const currentClientId = select.value;
-  if (currentClientId && renderedLibraryClientId !== currentClientId) {
-    void syncClientBlockLibrary(currentClientId, false);
-  }
-
-  if (observedClientSelects.has(select)) return;
-  observedClientSelects.add(select);
-
+  if (select.value && currentLibraryClientId !== select.value) void syncLibrary(select.value, false);
+  if (watchedSelects.has(select)) return;
+  watchedSelects.add(select);
   select.addEventListener("change", () => {
-    const clientId = select.value;
-    pendingClearClientId = clientId;
-    if (!clientId) return;
-
-    void syncClientBlockLibrary(clientId, true);
+    clearForClientId = select.value;
+    void syncLibrary(select.value, true);
     window.setTimeout(() => {
-      if (pendingClearClientId === clientId) clearActiveTextBlocks();
+      if (clearForClientId === select.value) clearBlocks();
     }, 500);
   });
 }
 
-function assetCardMatches(card: HTMLElement, filterId: string) {
-  if (filterId === "all") return true;
-  const text = normalizeText(card.textContent || "");
-
-  switch (filterId) {
-    case "logo":
-      return text.includes("logo") || text.includes("logotipo");
-    case "reference":
-      return text.includes("reference") || text.includes("referencia");
-    case "product":
-      return text.includes("product") || text.includes("producto");
-    case "element":
-      return text.includes("element") || text.includes("elemento");
-    case "stock":
-      return text.includes("stock");
-    case "featured":
-      return text.includes("destacado");
-    default:
-      return true;
-  }
-}
-
-function findAssetCards(section: HTMLElement) {
-  return Array.from(section.querySelectorAll("button.rounded-3xl, div.rounded-3xl")).filter((card): card is HTMLElement => {
-    if (!(card instanceof HTMLElement)) return false;
-    if (card.dataset.bustFilterPills) return false;
-    const text = normalizeText(card.textContent || "");
-    return text.includes("asset") || text.includes("usar") || text.includes("omitir") || text.includes("logo") || text.includes("referencia") || text.includes("producto") || text.includes("elemento") || text.includes("stock") || text.includes("destacado");
+function removeMainPills() {
+  document.querySelectorAll('[data-bust-filter-pills="text-blocks"], [data-bust-filter-pills="client-library"]').forEach((el) => {
+    if (!el.closest("aside")) el.remove();
   });
-}
-
-function applyAssetFilter(section: HTMLElement, filterId: string) {
-  section.dataset.activeAssetFilter = filterId;
-  const cards = findAssetCards(section);
-  let visibleCount = 0;
-
-  cards.forEach((card) => {
-    const visible = assetCardMatches(card, filterId);
-    card.style.display = visible ? "" : "none";
-    if (visible) visibleCount += 1;
-  });
-
-  const existing = section.querySelector('[data-bust-empty-state="assets"]');
-  if (visibleCount > 0) {
-    existing?.remove();
-    return;
-  }
-
-  if (!existing) {
-    const empty = document.createElement("p");
-    empty.dataset.bustEmptyState = "assets";
-    empty.className = "mt-3 rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-600";
-    empty.textContent = "No hay assets en esta categoría.";
-    section.querySelector('[data-bust-filter-pills="assets"]')?.insertAdjacentElement("afterend", empty);
-  }
-}
-
-function addAssetFilters() {
-  const sections = findSectionsByText(["assets del cliente"]).filter((section) => section.closest("aside"));
-
-  sections.forEach((section) => {
-    if (section.dataset.bustAssetFilterReady === "true") {
-      applyAssetFilter(section, section.dataset.activeAssetFilter || "all");
-      return;
-    }
-
-    section.dataset.bustAssetFilterReady = "true";
-    section.dataset.activeAssetFilter = "all";
-    const wrapper = createFilterWrapper({
-      kind: "assets",
-      options: assetFilters,
-      activeFilter: "all",
-      onFilter: (filterId) => applyAssetFilter(section, filterId),
+  sectionsContaining("1. selecciona la marca").concat(sectionsContaining("3. mensaje y bloques de texto")).forEach((section) => {
+    Array.from(section.children).forEach((child) => {
+      if (!(child instanceof HTMLElement) || child.closest("aside")) return;
+      const text = n(child.textContent || "");
+      const count = textFilters.filter(([, label]) => text.includes(n(label))).length;
+      if (count >= 4) child.remove();
     });
-
-    const firstList = Array.from(section.children).find((child) => {
-      if (!(child instanceof HTMLElement)) return false;
-      const className = child.className.toString();
-      return className.includes("mt-5") || className.includes("grid gap");
-    });
-
-    section.insertBefore(wrapper, firstList || section.children[2] || null);
-    applyAssetFilter(section, "all");
   });
 }
 
-function hideBriefControls() {
-  if (!isGeneratorBriefPage()) return;
+function filterAssetCards(section: HTMLElement, filter: string) {
+  section.querySelectorAll("button.rounded-3xl, div.rounded-3xl").forEach((card) => {
+    if (!(card instanceof HTMLElement) || card.dataset.assetPills) return;
+    const text = n(card.textContent || "");
+    const match = filter === "all" || text.includes(filter) || (filter === "featured" && text.includes("destacado")) || (filter === "reference" && text.includes("referencia"));
+    card.style.display = match ? "" : "none";
+  });
+}
 
-  document.querySelectorAll("p, label, button, span, h2").forEach((element) => {
-    const text = normalizeText(element.textContent || "");
+function addAssetPills() {
+  const section = sidebarAssetSection();
+  if (!section || section.dataset.assetPillsReady === "true") return;
+  section.dataset.assetPillsReady = "true";
+  const pills = makePills(assetFilters, (filter) => filterAssetCards(section, filter));
+  pills.dataset.assetPills = "true";
+  const target = Array.from(section.children).find((child) => child instanceof HTMLElement && (child.className.toString().includes("mt-5") || child.className.toString().includes("grid gap")));
+  section.insertBefore(pills, target || section.children[2] || null);
+}
 
-    if (text.includes("5. logo oficial opcional")) {
-      const section = element.closest("section");
+function hideConfusingControls() {
+  document.querySelectorAll("p, label, button, span, h2").forEach((el) => {
+    const text = n(el.textContent || "");
+    if (text.includes("5. logo oficial opcional") || text.includes("motor de ia") || text.includes("seleccion del generador")) {
+      const section = el.closest("section");
       if (section instanceof HTMLElement) section.style.display = "none";
     }
-
     if (text === "logo visible") {
-      const button = element.closest("button");
+      const button = el.closest("button");
       if (button instanceof HTMLElement) button.style.display = "none";
     }
-
-    if (text.includes("motor de ia") || text.includes("seleccion del generador")) {
-      const section = element.closest("section");
-      if (section instanceof HTMLElement) section.style.display = "none";
-    }
-
     if (text === "motor sugerido") {
-      const card = element.closest("div");
+      const card = el.closest("div");
       if (card instanceof HTMLElement) card.style.display = "none";
     }
   });
+}
 
-  removeMainAreaTextFilters();
-  watchClientSelector();
-  addAssetFilters();
+function run() {
+  if (!isBriefPage()) return;
+  hideConfusingControls();
+  removeMainPills();
+  watchClientSelect();
+  addAssetPills();
 }
 
 export default function HideBriefLogoControls() {
   useEffect(() => {
-    hideBriefControls();
-
+    run();
     const observer = new MutationObserver(() => {
-      hideBriefControls();
-      window.setTimeout(removeMainAreaTextFilters, 0);
+      run();
+      window.setTimeout(removeMainPills, 0);
     });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
-
+    observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, []);
 
