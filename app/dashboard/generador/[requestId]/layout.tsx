@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import RequestFeedbackWidget from "./RequestFeedbackWidget";
-import LogoOverlayWidget from "./LogoOverlayWidget";
 
 export default function GeneratorRequestLayout({
   children,
@@ -10,7 +9,6 @@ export default function GeneratorRequestLayout({
   return (
     <>
       {children}
-      <LogoOverlayWidget />
       <RequestFeedbackWidget />
     </>
   );
