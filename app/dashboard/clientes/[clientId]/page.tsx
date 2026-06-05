@@ -20,7 +20,6 @@ type BrandBrainForm = {
   visualStyle: string;
   dos: string;
   donts: string;
-  recommendedModels: string[];
 };
 
 type ClientData = {
@@ -35,15 +34,8 @@ type ClientData = {
     visualStyle?: string[];
     dos?: string[];
     donts?: string[];
-    recommendedModels?: string[];
   };
 };
-
-const availableModels = [
-  { id: "draft-mini-low", label: "Borrador económico · GPT Image Mini" },
-  { id: "nano-banana", label: "Calidad para redes · Nano Banana" },
-  { id: "gpt-image", label: "GPT Image estándar" },
-];
 
 function joinItems(items?: string[]) {
   return Array.isArray(items) ? items.join(", ") : "";
@@ -71,7 +63,6 @@ export default function ClientBrandBrainPage() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSavingClient, setIsSavingClient] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
   const [clientName, setClientName] = useState("");
   const [clientIndustry, setClientIndustry] = useState("");
@@ -89,7 +80,6 @@ export default function ClientBrandBrainPage() {
     visualStyle: "",
     dos: "",
     donts: "",
-    recommendedModels: [],
   });
 
   useEffect(() => {
@@ -137,9 +127,6 @@ export default function ClientBrandBrainPage() {
         visualStyle: joinItems(brandBrain.visualStyle),
         dos: Array.isArray(brandBrain.dos) ? brandBrain.dos.join("\n") : "",
         donts: Array.isArray(brandBrain.donts) ? brandBrain.donts.join("\n") : "",
-        recommendedModels: Array.isArray(brandBrain.recommendedModels)
-          ? brandBrain.recommendedModels
-          : [],
       });
     } catch (loadError) {
       console.error(loadError);
@@ -156,52 +143,6 @@ export default function ClientBrandBrainPage() {
     value: BrandBrainForm[K],
   ) {
     setForm((currentForm) => ({ ...currentForm, [field]: value }));
-  }
-
-  function toggleModel(modelId: string) {
-    setForm((currentForm) => {
-      const alreadySelected = currentForm.recommendedModels.includes(modelId);
-
-      return {
-        ...currentForm,
-        recommendedModels: alreadySelected
-          ? currentForm.recommendedModels.filter((model) => model !== modelId)
-          : [...currentForm.recommendedModels, modelId],
-      };
-    });
-  }
-
-  async function handleSaveClientInfo(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    setSuccess("");
-
-    const cleanName = editableClientName.trim();
-    const cleanIndustry = editableClientIndustry.trim();
-
-    if (!cleanName) {
-      setError("El cliente debe tener nombre.");
-      return;
-    }
-
-    setIsSavingClient(true);
-
-    try {
-      await updateDoc(doc(db, "clients", clientId), {
-        name: cleanName,
-        industry: cleanIndustry,
-        updatedAt: serverTimestamp(),
-      });
-
-      setClientName(cleanName);
-      setClientIndustry(cleanIndustry || "Sin categoría definida");
-      setSuccess("Ficha del cliente actualizada correctamente.");
-    } catch (saveError) {
-      console.error(saveError);
-      setError("No pudimos actualizar la ficha del cliente.");
-    } finally {
-      setIsSavingClient(false);
-    }
   }
 
   async function handleArchiveClient() {
@@ -235,10 +176,21 @@ export default function ClientBrandBrainPage() {
     event.preventDefault();
     setError("");
     setSuccess("");
+
+    const cleanName = editableClientName.trim();
+    const cleanIndustry = editableClientIndustry.trim();
+
+    if (!cleanName) {
+      setError("El cliente debe tener nombre.");
+      return;
+    }
+
     setIsSaving(true);
 
     try {
       await updateDoc(doc(db, "clients", clientId), {
+        name: cleanName,
+        industry: cleanIndustry,
         brandBrain: {
           brandDescription: form.brandDescription.trim(),
           tone: form.tone.trim(),
@@ -247,12 +199,13 @@ export default function ClientBrandBrainPage() {
           visualStyle: splitCommaSeparated(form.visualStyle),
           dos: splitLineSeparated(form.dos),
           donts: splitLineSeparated(form.donts),
-          recommendedModels: form.recommendedModels,
         },
         updatedAt: serverTimestamp(),
       });
 
-      setSuccess("Brand Brain guardado correctamente.");
+      setClientName(cleanName);
+      setClientIndustry(cleanIndustry || "Sin categoría definida");
+      setSuccess("Datos del cliente guardados correctamente.");
     } catch (saveError) {
       console.error(saveError);
       setError(
@@ -265,6 +218,8 @@ export default function ClientBrandBrainPage() {
 
   const completeness = useMemo(() => {
     const fields = [
+      editableClientName,
+      editableClientIndustry,
       form.brandDescription,
       form.tone,
       form.colors,
@@ -276,7 +231,7 @@ export default function ClientBrandBrainPage() {
 
     const completed = fields.filter((field) => field.trim().length > 0).length;
     return Math.round((completed / fields.length) * 100);
-  }, [form]);
+  }, [editableClientName, editableClientIndustry, form]);
 
   const canArchiveClient = deleteConfirmation.trim() === clientName.trim();
 
@@ -460,13 +415,13 @@ export default function ClientBrandBrainPage() {
                 Ficha del cliente
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Editar datos base
+                Datos base
               </h2>
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                Estos datos se usan para identificar al cliente dentro del generador.
+                Estos datos identifican al cliente y también se guardan con el mismo botón de la memoria base.
               </p>
 
-              <form className="mt-5 space-y-4" onSubmit={handleSaveClientInfo}>
+              <div className="mt-5 space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-zinc-800" htmlFor="client-name">
                     Nombre del cliente
@@ -489,47 +444,6 @@ export default function ClientBrandBrainPage() {
                     className="h-12 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 text-base outline-none transition focus:border-zinc-950 focus:bg-white"
                   />
                 </div>
-                <button
-                  type="submit"
-                  disabled={isSavingClient}
-                  className="flex h-12 w-full items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {isSavingClient ? "Guardando ficha..." : "Guardar ficha"}
-                </button>
-              </form>
-            </section>
-
-            <section className="rounded-[2rem] border border-zinc-200 bg-white p-6 shadow-sm sm:p-8">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                Modelos recomendados
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-                Qué IA suele convenir
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-zinc-600">
-                Esto servirá después para que el sistema sugiera el generador adecuado por marca.
-              </p>
-
-              <div className="mt-6 grid gap-3">
-                {availableModels.map((model) => {
-                  const selected = form.recommendedModels.includes(model.id);
-
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      onClick={() => toggleModel(model.id)}
-                      className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-medium transition ${
-                        selected
-                          ? "border-zinc-950 bg-zinc-950 text-white"
-                          : "border-zinc-200 bg-zinc-50 text-zinc-800 hover:bg-white"
-                      }`}
-                    >
-                      <span>{model.label}</span>
-                      <span>{selected ? "Seleccionado" : "Agregar"}</span>
-                    </button>
-                  );
-                })}
               </div>
             </section>
 
@@ -555,7 +469,7 @@ export default function ClientBrandBrainPage() {
                 disabled={isSaving}
                 className="mt-6 flex h-12 w-full items-center justify-center rounded-2xl bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isSaving ? "Guardando..." : "Guardar Brand Brain"}
+                {isSaving ? "Guardando..." : "Guardar cambios del cliente"}
               </button>
             </section>
 
