@@ -41,17 +41,21 @@ function injectStyles() {
   style.textContent = `
     [data-bust-asset-gallery="true"] {
       display: grid !important;
-      gap: 10px !important;
+      gap: 3px !important;
       grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
       width: 100% !important;
       align-items: start !important;
+    }
+
+    [data-bust-asset-gallery="true"] > *:not([data-bust-asset-card="true"]) {
+      grid-column: 1 / -1 !important;
     }
 
     [data-bust-asset-card="true"] {
       aspect-ratio: 1 / 1 !important;
       background: #e4e4e7 !important;
       border: 0 !important;
-      border-radius: 18px !important;
+      border-radius: 5px !important;
       box-shadow: none !important;
       display: block !important;
       margin: 0 !important;
@@ -64,11 +68,11 @@ function injectStyles() {
     }
 
     [data-bust-asset-card="true"]::after {
-      background: linear-gradient(180deg, rgba(0,0,0,0) 42%, rgba(0,0,0,.58) 100%);
+      background: linear-gradient(180deg, rgba(0,0,0,0) 46%, rgba(0,0,0,.62) 100%);
       bottom: 0;
       content: "";
       left: 0;
-      opacity: .96;
+      opacity: .9;
       pointer-events: none;
       position: absolute;
       right: 0;
@@ -98,6 +102,7 @@ function injectStyles() {
       display: block !important;
       height: 100% !important;
       object-fit: cover !important;
+      padding: 0 !important;
       width: 100% !important;
     }
 
@@ -106,7 +111,7 @@ function injectStyles() {
       bottom: 0 !important;
       left: 0 !important;
       min-width: 0 !important;
-      padding: 10px !important;
+      padding: 8px !important;
       position: absolute !important;
       right: 0 !important;
       z-index: 2 !important;
@@ -115,10 +120,10 @@ function injectStyles() {
     [data-bust-asset-caption="true"] p {
       color: #fff !important;
       display: -webkit-box !important;
-      font-size: 11px !important;
-      font-weight: 700 !important;
+      font-size: 10px !important;
+      font-weight: 750 !important;
       letter-spacing: -.01em !important;
-      line-height: 1.15 !important;
+      line-height: 1.1 !important;
       margin: 0 !important;
       overflow: hidden !important;
       -webkit-box-orient: vertical !important;
@@ -129,34 +134,34 @@ function injectStyles() {
     [data-bust-asset-caption="true"] .text-xs {
       color: rgba(255,255,255,.78) !important;
       display: block !important;
-      font-size: 9px !important;
-      font-weight: 700 !important;
+      font-size: 8px !important;
+      font-weight: 800 !important;
       letter-spacing: .08em !important;
-      margin-top: 4px !important;
+      margin-top: 3px !important;
       text-transform: uppercase !important;
     }
 
     [data-bust-asset-status="true"] {
       align-items: center !important;
-      background: rgba(255,255,255,.92) !important;
+      background: rgba(255,255,255,.94) !important;
       border-radius: 999px !important;
       color: #18181b !important;
       display: inline-flex !important;
       font-size: 0 !important;
       font-weight: 900 !important;
-      height: 24px !important;
+      height: 22px !important;
       justify-content: center !important;
       pointer-events: none !important;
       position: absolute !important;
-      right: 8px !important;
-      top: 8px !important;
-      width: 24px !important;
+      right: 6px !important;
+      top: 6px !important;
+      width: 22px !important;
       z-index: 3 !important;
     }
 
     [data-bust-asset-status="true"]::before {
       content: "+";
-      font-size: 16px;
+      font-size: 15px;
       line-height: 1;
     }
 
@@ -180,6 +185,7 @@ function injectStyles() {
       flex-wrap: wrap !important;
       gap: 8px !important;
       margin: 10px 0 14px !important;
+      width: 100% !important;
     }
 
     [data-bust-asset-filter-row="true"] button {
@@ -191,7 +197,7 @@ function injectStyles() {
 
     @media (max-width: 760px) {
       [data-bust-asset-gallery="true"] {
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
       }
     }
   `;
@@ -235,15 +241,26 @@ function clearDefaultSelectedAssets(cards: HTMLElement[]) {
     card.dataset.bustDefaultCleared = "true";
 
     const text = normalize(card.textContent || "");
-    if (!text.includes("omitir")) return;
+    if (!text.includes("usar")) return;
 
     card.click();
   });
 }
 
-function findGalleryContainer(cards: HTMLElement[]) {
-  const first = cards[0];
-  return first?.parentElement || null;
+function findGalleryContainer(section: HTMLElement, cards: HTMLElement[]) {
+  const candidates = Array.from(section.querySelectorAll("div")).filter((candidate): candidate is HTMLElement => {
+    if (!(candidate instanceof HTMLElement)) return false;
+    const directCardCount = Array.from(candidate.children).filter((child) => cards.includes(child as HTMLElement)).length;
+    return directCardCount >= 2;
+  });
+
+  return candidates[0] || cards[0]?.parentElement || null;
+}
+
+function clearWrongGalleryMarkers(section: HTMLElement, gallery: HTMLElement | null) {
+  section.querySelectorAll<HTMLElement>("[data-bust-asset-gallery]").forEach((element) => {
+    if (element !== gallery) delete element.dataset.bustAssetGallery;
+  });
 }
 
 function styleImage(card: HTMLElement) {
@@ -279,7 +296,7 @@ function styleCaption(card: HTMLElement) {
 }
 
 function updateSelectionState(card: HTMLElement) {
-  const selected = normalize(card.textContent || "").includes("omitir");
+  const selected = normalize(card.textContent || "").includes("usar");
   card.dataset.selected = selected ? "true" : "false";
 
   let status = card.querySelector<HTMLElement>("[data-bust-asset-status]");
@@ -299,7 +316,8 @@ function enhanceCards(section: HTMLElement) {
   const cards = getAssetCards(section);
   clearDefaultSelectedAssets(cards);
 
-  const gallery = findGalleryContainer(cards);
+  const gallery = findGalleryContainer(section, cards);
+  clearWrongGalleryMarkers(section, gallery);
   if (gallery) gallery.dataset.bustAssetGallery = "true";
 
   cards.forEach((card) => {
