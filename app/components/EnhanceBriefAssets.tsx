@@ -3,7 +3,14 @@
 import { useEffect } from "react";
 
 const styleId = "bust-asset-gallery-style";
-const visualFilters = new Set(["todos", "referencias", "referencia", "producto", "elementos", "elemento", "stock", "destacados", "destacado"]);
+const filters = [
+  ["all", "Todos"],
+  ["reference", "Referencias"],
+  ["product", "Producto"],
+  ["element", "Elementos"],
+  ["stock", "Stock"],
+  ["featured", "Destacados"],
+] as const;
 const wiredFilterButtons = new WeakSet<HTMLButtonElement>();
 
 function normalize(value: string) {
@@ -188,6 +195,7 @@ function injectStyles() {
       display: flex !important;
       flex-wrap: wrap !important;
       gap: 8px !important;
+      grid-column: 1 / -1 !important;
       margin: 10px 0 14px !important;
       width: 100% !important;
     }
@@ -204,22 +212,43 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
-function hideLogoPills(section: HTMLElement) {
-  section.querySelectorAll("button").forEach((button) => {
-    if (!(button instanceof HTMLButtonElement)) return;
-    const text = normalize(button.textContent || "");
+function removeOldAssetPills(section: HTMLElement) {
+  section.querySelectorAll("[data-asset-pills]").forEach((element) => element.remove());
+}
 
-    if (text === "logos" || text === "logo") {
-      button.style.display = "none";
-      button.dataset.bustAssetEnhancerControl = "true";
-      return;
-    }
+function buttonClass(active: boolean) {
+  return active
+    ? "rounded-full bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition"
+    : "rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50";
+}
 
-    if (visualFilters.has(text)) {
-      const row = button.parentElement;
-      if (row instanceof HTMLElement) row.dataset.bustAssetFilterRow = "true";
-    }
+function getOrCreateFilterRow(section: HTMLElement) {
+  let row = section.querySelector<HTMLElement>('[data-bust-asset-filter-row="true"]');
+  if (row) return row;
+
+  row = document.createElement("div");
+  row.dataset.bustAssetFilterRow = "true";
+
+  filters.forEach(([id, label], index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.bustAssetFilter = id;
+    button.className = buttonClass(index === 0);
+    button.textContent = label;
+    row?.appendChild(button);
   });
+
+  const grid = Array.from(section.children).find((child) => {
+    if (!(child instanceof HTMLElement)) return false;
+    return child.className.toString().includes("mt-5") || child.className.toString().includes("grid gap");
+  });
+
+  section.insertBefore(row, grid || section.children[3] || null);
+  return row;
+}
+
+function filterFromButton(button: HTMLButtonElement) {
+  return button.dataset.bustAssetFilter || "all";
 }
 
 function getAssetCards(section: HTMLElement) {
@@ -230,16 +259,6 @@ function getAssetCards(section: HTMLElement) {
     if (card.closest("[data-bust-asset-filter-row]")) return false;
     return Boolean(card.querySelector("img")) || normalize(card.textContent || "").includes("usar") || normalize(card.textContent || "").includes("omitir");
   });
-}
-
-function filterFromButton(button: HTMLButtonElement) {
-  const text = normalize(button.textContent || "");
-  if (text.includes("referencia")) return "reference";
-  if (text.includes("producto")) return "product";
-  if (text.includes("elemento")) return "element";
-  if (text.includes("stock")) return "stock";
-  if (text.includes("destacado")) return "featured";
-  return "all";
 }
 
 function cardMatchesFilter(card: HTMLElement, filter: string) {
@@ -254,12 +273,6 @@ function cardMatchesFilter(card: HTMLElement, filter: string) {
   if (filter === "featured") return text.includes("destacado");
 
   return true;
-}
-
-function buttonClass(active: boolean) {
-  return active
-    ? "rounded-full bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition"
-    : "rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50";
 }
 
 function setFilterButtonState(activeButton: HTMLButtonElement) {
@@ -395,9 +408,19 @@ function styleCaption(card: HTMLElement) {
   }
 }
 
+function hideLogos(section: HTMLElement) {
+  getAssetCards(section).forEach((card) => {
+    if (isLogoCard(card)) {
+      card.style.display = "none";
+      card.dataset.logoAssetHidden = "true";
+    }
+  });
+}
+
 function enhanceCards(section: HTMLElement) {
   injectStyles();
-  hideLogoPills(section);
+  removeOldAssetPills(section);
+  getOrCreateFilterRow(section);
   wireFilterButtons(section);
 
   const cards = getAssetCards(section).filter((card) => !isLogoCard(card));
@@ -419,6 +442,7 @@ function enhanceCards(section: HTMLElement) {
     makeTapImmediate(card);
   });
 
+  hideLogos(section);
   applyAssetFilter(section, section.dataset.bustAssetActiveFilter || "all");
 }
 
