@@ -4,6 +4,7 @@ import { useEffect } from "react";
 
 const styleId = "bust-asset-gallery-style";
 const visualFilters = new Set(["todos", "referencias", "referencia", "producto", "elementos", "elemento", "stock", "destacados", "destacado"]);
+const wiredFilterButtons = new WeakSet<HTMLButtonElement>();
 
 function normalize(value: string) {
   return value
@@ -230,6 +231,81 @@ function getAssetCards(section: HTMLElement) {
   });
 }
 
+function filterFromButton(button: HTMLButtonElement) {
+  const text = normalize(button.textContent || "");
+  if (text.includes("referencia")) return "reference";
+  if (text.includes("producto")) return "product";
+  if (text.includes("elemento")) return "element";
+  if (text.includes("stock")) return "stock";
+  if (text.includes("destacado")) return "featured";
+  return "all";
+}
+
+function cardMatchesFilter(card: HTMLElement, filter: string) {
+  if (isLogoCard(card)) return false;
+  const text = normalize(card.textContent || "");
+
+  if (filter === "all") return true;
+  if (filter === "reference") return text.includes("reference") || text.includes("referencia");
+  if (filter === "product") return text.includes("product") || text.includes("producto") || text.includes("anuncio de producto");
+  if (filter === "element") return text.includes("element") || text.includes("elemento") || text.includes("icono") || text.includes("sticker") || text.includes("textura");
+  if (filter === "stock") return text.includes("stock");
+  if (filter === "featured") return text.includes("destacado");
+
+  return true;
+}
+
+function buttonClass(active: boolean) {
+  return active
+    ? "rounded-full bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition"
+    : "rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50";
+}
+
+function setFilterButtonState(section: HTMLElement, activeButton: HTMLButtonElement) {
+  const row = activeButton.closest("[data-bust-asset-filter-row]");
+  if (!(row instanceof HTMLElement)) return;
+
+  row.querySelectorAll("button").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    button.className = buttonClass(button === activeButton);
+  });
+}
+
+function applyAssetFilter(section: HTMLElement, filter: string) {
+  section.dataset.bustAssetActiveFilter = filter;
+
+  getAssetCards(section).forEach((card) => {
+    if (isLogoCard(card)) {
+      card.style.display = "none";
+      card.dataset.logoAssetHidden = "true";
+      return;
+    }
+
+    card.style.display = cardMatchesFilter(card, filter) ? "" : "none";
+  });
+}
+
+function wireFilterButtons(section: HTMLElement) {
+  section.querySelectorAll("[data-bust-asset-filter-row] button").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    if (wiredFilterButtons.has(button)) return;
+
+    wiredFilterButtons.add(button);
+    button.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        const filter = filterFromButton(button);
+        setFilterButtonState(section, button);
+        applyAssetFilter(section, filter);
+      },
+      true,
+    );
+  });
+}
+
 function syncSelectionState(card: HTMLElement) {
   const selected = normalize(card.textContent || "").includes("usar");
   card.dataset.selected = selected ? "true" : "false";
@@ -311,6 +387,7 @@ function styleCaption(card: HTMLElement) {
 function enhanceCards(section: HTMLElement) {
   injectStyles();
   hideLogoPills(section);
+  wireFilterButtons(section);
 
   const cards = getAssetCards(section).filter((card) => !isLogoCard(card));
   const gallery = findGalleryContainer(section, cards);
@@ -330,6 +407,8 @@ function enhanceCards(section: HTMLElement) {
     syncSelectionState(card);
     makeTapImmediate(card);
   });
+
+  applyAssetFilter(section, section.dataset.bustAssetActiveFilter || "all");
 }
 
 function run() {
