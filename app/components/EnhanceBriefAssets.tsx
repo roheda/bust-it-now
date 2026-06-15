@@ -30,8 +30,7 @@ function isLogoCard(card: HTMLElement) {
 }
 
 function injectStyles() {
-  const oldStyle = document.getElementById(styleId);
-  oldStyle?.remove();
+  if (document.getElementById(styleId)) return;
 
   const style = document.createElement("style");
   style.id = styleId;
@@ -284,17 +283,17 @@ function updateSelectionState(card: HTMLElement) {
   const selected = text.includes("omitir");
   card.dataset.selected = selected ? "true" : "false";
 
-  const existingCheck = card.querySelector("[data-bust-asset-check]");
-  const check = existingCheck instanceof HTMLElement ? existingCheck : document.createElement("span");
-  if (!(existingCheck instanceof HTMLElement)) {
+  let check = card.querySelector<HTMLElement>("[data-bust-asset-check]");
+  if (!check) {
+    check = document.createElement("span");
     check.dataset.bustAssetCheck = "true";
     check.textContent = "✓";
     card.appendChild(check);
   }
 
-  const existingStatus = card.querySelector("[data-bust-asset-status]");
-  const status = existingStatus instanceof HTMLElement ? existingStatus : document.createElement("span");
-  if (!(existingStatus instanceof HTMLElement)) {
+  let status = card.querySelector<HTMLElement>("[data-bust-asset-status]");
+  if (!status) {
+    status = document.createElement("span");
     status.dataset.bustAssetStatus = "true";
     card.appendChild(status);
   }
@@ -336,9 +335,23 @@ function run() {
 export default function EnhanceBriefAssets() {
   useEffect(() => {
     run();
-    const observer = new MutationObserver(run);
+
+    let frame: number | null = null;
+    const scheduleRun = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        run();
+      });
+    };
+
+    const observer = new MutationObserver(scheduleRun);
     observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
+
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
 
   return null;
