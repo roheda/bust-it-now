@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import EnhanceBriefAssets from "./components/EnhanceBriefAssets";
 import FeedbackWidget from "./components/FeedbackWidget";
+import GeneratedAssetSaverWidget from "./components/GeneratedAssetSaverWidget";
 import HideBriefLogoControls from "./components/HideBriefLogoControls";
 import LogoOverlayEditorWidget from "./components/LogoOverlayEditorWidget";
 import "./globals.css";
@@ -36,6 +37,7 @@ export default function RootLayout({
         {children}
         <HideBriefLogoControls />
         <EnhanceBriefAssets />
+        <GeneratedAssetSaverWidget />
         <LogoOverlayEditorWidget />
         <FeedbackWidget />
       </body>
