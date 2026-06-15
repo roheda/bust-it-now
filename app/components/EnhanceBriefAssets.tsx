@@ -18,10 +18,6 @@ function isBriefPage() {
   return path === "/dashboard/generador" || path.startsWith("/dashboard/generador/editar/");
 }
 
-function isNewGeneratorPage() {
-  return window.location.pathname === "/dashboard/generador";
-}
-
 function getAssetSection() {
   return Array.from(document.querySelectorAll("aside section")).find((section): section is HTMLElement => {
     return section instanceof HTMLElement && normalize(section.textContent || "").includes("assets del cliente");
@@ -52,11 +48,13 @@ function injectStyles() {
     }
 
     [data-bust-asset-card="true"] {
+      -webkit-tap-highlight-color: transparent !important;
       aspect-ratio: 1 / 1 !important;
       background: #e4e4e7 !important;
       border: 0 !important;
       border-radius: 5px !important;
       box-shadow: none !important;
+      cursor: pointer !important;
       display: block !important;
       margin: 0 !important;
       min-height: 0 !important;
@@ -64,6 +62,8 @@ function injectStyles() {
       overflow: hidden !important;
       padding: 0 !important;
       position: relative !important;
+      touch-action: manipulation !important;
+      user-select: none !important;
       width: 100% !important;
     }
 
@@ -93,6 +93,7 @@ function injectStyles() {
       min-height: 0 !important;
       overflow: hidden !important;
       padding: 0 !important;
+      pointer-events: none !important;
       position: absolute !important;
       width: 100% !important;
       z-index: 0 !important;
@@ -103,6 +104,7 @@ function injectStyles() {
       height: 100% !important;
       object-fit: cover !important;
       padding: 0 !important;
+      pointer-events: none !important;
       width: 100% !important;
     }
 
@@ -112,6 +114,7 @@ function injectStyles() {
       left: 0 !important;
       min-width: 0 !important;
       padding: 8px !important;
+      pointer-events: none !important;
       position: absolute !important;
       right: 0 !important;
       z-index: 2 !important;
@@ -227,7 +230,7 @@ function getAssetCards(section: HTMLElement) {
   });
 }
 
-function updateSelectionState(card: HTMLElement) {
+function syncSelectionState(card: HTMLElement) {
   const selected = normalize(card.textContent || "").includes("usar");
   card.dataset.selected = selected ? "true" : "false";
 
@@ -241,25 +244,18 @@ function updateSelectionState(card: HTMLElement) {
   status.setAttribute("aria-label", selected ? "Seleccionado" : "Agregar al brief");
 }
 
-function clearDefaultSelectedAssets(section: HTMLElement, cards: HTMLElement[]) {
-  if (!isNewGeneratorPage()) return;
-  if (section.dataset.bustDefaultAssetsCleared === "true") return;
-  if (section.dataset.bustDefaultAssetsClearing === "true") return;
+function makeTapImmediate(card: HTMLElement) {
+  if (card.dataset.bustTapImmediate === "true") return;
+  card.dataset.bustTapImmediate = "true";
 
-  const selectedCard = cards.find((card) => normalize(card.textContent || "").includes("usar"));
-
-  if (!selectedCard) {
-    section.dataset.bustDefaultAssetsCleared = "true";
-    return;
-  }
-
-  section.dataset.bustDefaultAssetsClearing = "true";
-  selectedCard.click();
-
-  window.setTimeout(() => {
-    delete section.dataset.bustDefaultAssetsClearing;
-    run();
-  }, 160);
+  card.addEventListener(
+    "pointerdown",
+    () => {
+      const currentlySelected = card.dataset.selected === "true";
+      card.dataset.selected = currentlySelected ? "false" : "true";
+    },
+    { passive: true },
+  );
 }
 
 function findGalleryContainer(section: HTMLElement, cards: HTMLElement[]) {
@@ -317,8 +313,6 @@ function enhanceCards(section: HTMLElement) {
   hideLogoPills(section);
 
   const cards = getAssetCards(section).filter((card) => !isLogoCard(card));
-  clearDefaultSelectedAssets(section, cards);
-
   const gallery = findGalleryContainer(section, cards);
   clearWrongGalleryMarkers(section, gallery);
   if (gallery) gallery.dataset.bustAssetGallery = "true";
@@ -333,7 +327,8 @@ function enhanceCards(section: HTMLElement) {
     card.dataset.bustAssetCard = "true";
     styleImage(card);
     styleCaption(card);
-    updateSelectionState(card);
+    syncSelectionState(card);
+    makeTapImmediate(card);
   });
 }
 
