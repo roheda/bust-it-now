@@ -194,12 +194,6 @@ function injectStyles() {
       min-height: 28px !important;
       padding: 6px 11px !important;
     }
-
-    @media (max-width: 760px) {
-      [data-bust-asset-gallery="true"] {
-        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-      }
-    }
   `;
 
   document.head.appendChild(style);
@@ -233,28 +227,52 @@ function getAssetCards(section: HTMLElement) {
   });
 }
 
-function clearDefaultSelectedAssets(cards: HTMLElement[]) {
+function updateSelectionState(card: HTMLElement) {
+  const selected = normalize(card.textContent || "").includes("usar");
+  card.dataset.selected = selected ? "true" : "false";
+
+  let status = card.querySelector<HTMLElement>("[data-bust-asset-status]");
+  if (!status) {
+    status = document.createElement("span");
+    status.dataset.bustAssetStatus = "true";
+    card.appendChild(status);
+  }
+
+  status.setAttribute("aria-label", selected ? "Seleccionado" : "Agregar al brief");
+}
+
+function clearDefaultSelectedAssets(section: HTMLElement, cards: HTMLElement[]) {
   if (!isNewGeneratorPage()) return;
+  if (section.dataset.bustDefaultAssetsCleared === "true") return;
+  if (section.dataset.bustDefaultAssetsClearing === "true") return;
 
-  cards.forEach((card) => {
-    if (card.dataset.bustDefaultCleared === "true") return;
-    card.dataset.bustDefaultCleared = "true";
+  const selectedCard = cards.find((card) => normalize(card.textContent || "").includes("usar"));
 
-    const text = normalize(card.textContent || "");
-    if (!text.includes("usar")) return;
+  if (!selectedCard) {
+    section.dataset.bustDefaultAssetsCleared = "true";
+    return;
+  }
 
-    card.click();
-  });
+  section.dataset.bustDefaultAssetsClearing = "true";
+  selectedCard.click();
+
+  window.setTimeout(() => {
+    delete section.dataset.bustDefaultAssetsClearing;
+    run();
+  }, 160);
 }
 
 function findGalleryContainer(section: HTMLElement, cards: HTMLElement[]) {
+  const parent = cards[0]?.parentElement;
+  if (parent instanceof HTMLElement && parent !== section) return parent;
+
   const candidates = Array.from(section.querySelectorAll("div")).filter((candidate): candidate is HTMLElement => {
     if (!(candidate instanceof HTMLElement)) return false;
     const directCardCount = Array.from(candidate.children).filter((child) => cards.includes(child as HTMLElement)).length;
     return directCardCount >= 2;
   });
 
-  return candidates[0] || cards[0]?.parentElement || null;
+  return candidates[0] || null;
 }
 
 function clearWrongGalleryMarkers(section: HTMLElement, gallery: HTMLElement | null) {
@@ -295,32 +313,18 @@ function styleCaption(card: HTMLElement) {
   }
 }
 
-function updateSelectionState(card: HTMLElement) {
-  const selected = normalize(card.textContent || "").includes("usar");
-  card.dataset.selected = selected ? "true" : "false";
-
-  let status = card.querySelector<HTMLElement>("[data-bust-asset-status]");
-  if (!status) {
-    status = document.createElement("span");
-    status.dataset.bustAssetStatus = "true";
-    card.appendChild(status);
-  }
-
-  status.setAttribute("aria-label", selected ? "Seleccionado" : "Agregar al brief");
-}
-
 function enhanceCards(section: HTMLElement) {
   injectStyles();
   hideLogoPills(section);
 
-  const cards = getAssetCards(section);
-  clearDefaultSelectedAssets(cards);
+  const cards = getAssetCards(section).filter((card) => !isLogoCard(card));
+  clearDefaultSelectedAssets(section, cards);
 
   const gallery = findGalleryContainer(section, cards);
   clearWrongGalleryMarkers(section, gallery);
   if (gallery) gallery.dataset.bustAssetGallery = "true";
 
-  cards.forEach((card) => {
+  getAssetCards(section).forEach((card) => {
     if (isLogoCard(card)) {
       card.style.display = "none";
       card.dataset.logoAssetHidden = "true";
