@@ -19,7 +19,7 @@ function isBriefPage() {
 }
 
 function getAssetSection() {
-  return Array.from(document.querySelectorAll("aside section")).find((section): section is HTMLElement => {
+  return Array.from(document.querySelectorAll("section")).find((section): section is HTMLElement => {
     return section instanceof HTMLElement && normalize(section.textContent || "").includes("assets del cliente");
   });
 }
@@ -30,82 +30,115 @@ function isLogoCard(card: HTMLElement) {
 }
 
 function injectStyles() {
-  if (document.getElementById(styleId)) return;
+  const oldStyle = document.getElementById(styleId);
+  oldStyle?.remove();
 
   const style = document.createElement("style");
   style.id = styleId;
   style.textContent = `
     [data-bust-asset-gallery="true"] {
-      column-count: 2;
-      column-gap: 10px;
-      display: block !important;
+      display: grid !important;
+      gap: 18px !important;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)) !important;
+      width: 100% !important;
+      align-items: start !important;
     }
 
     [data-bust-asset-card="true"] {
-      break-inside: avoid;
-      display: inline-block !important;
+      display: block !important;
       width: 100% !important;
-      margin: 0 0 10px !important;
+      min-width: 0 !important;
+      margin: 0 !important;
       padding: 0 !important;
       overflow: hidden !important;
-      border-radius: 18px !important;
-      border: 1px solid rgba(24,24,27,0.08) !important;
-      background: rgba(250,250,250,0.95) !important;
-      box-shadow: 0 12px 30px rgba(24,24,27,0.08) !important;
+      border-radius: 22px !important;
+      border: 1px solid rgba(24,24,27,0.1) !important;
+      background: rgba(255,255,255,0.96) !important;
+      box-shadow: 0 14px 38px rgba(24,24,27,0.08) !important;
       position: relative !important;
       transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
     }
 
     [data-bust-asset-card="true"]:hover {
       transform: translateY(-2px);
-      box-shadow: 0 18px 45px rgba(24,24,27,0.14) !important;
+      box-shadow: 0 20px 50px rgba(24,24,27,0.14) !important;
       border-color: rgba(24,24,27,0.22) !important;
     }
 
     [data-bust-asset-card="true"][data-selected="true"] {
-      border-color: rgba(24,24,27,0.85) !important;
-      box-shadow: 0 0 0 2px rgba(24,24,27,0.85), 0 16px 36px rgba(24,24,27,0.16) !important;
+      border-color: rgba(22,101,52,0.92) !important;
+      box-shadow: 0 0 0 3px rgba(34,197,94,0.28), 0 18px 44px rgba(22,101,52,0.16) !important;
     }
 
     [data-bust-asset-image-box="true"] {
       width: 100% !important;
+      min-height: 220px !important;
       border: 0 !important;
       background: #f4f4f5 !important;
-      border-radius: 18px 18px 0 0 !important;
-      padding: 0 !important;
+      border-radius: 22px 22px 0 0 !important;
+      padding: 10px !important;
       overflow: hidden !important;
     }
 
     [data-bust-asset-image-box="true"] img {
       width: 100% !important;
       height: 100% !important;
-      object-fit: cover !important;
+      object-fit: contain !important;
       display: block !important;
     }
 
     [data-bust-asset-caption="true"] {
-      padding: 9px 10px 10px !important;
-      background: rgba(255,255,255,0.92) !important;
+      padding: 12px 14px 4px !important;
+      background: rgba(255,255,255,0.96) !important;
+    }
+
+    [data-bust-asset-status="true"] {
+      align-items: center;
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 11px;
+      font-weight: 800;
+      gap: 6px;
+      letter-spacing: .01em;
+      line-height: 1;
+      padding: 8px 11px;
+      pointer-events: none;
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      z-index: 3;
+    }
+
+    [data-bust-asset-card="true"][data-selected="true"] [data-bust-asset-status="true"] {
+      background: rgba(22,101,52,.96);
+      color: #fff;
+    }
+
+    [data-bust-asset-card="true"][data-selected="false"] [data-bust-asset-status="true"] {
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(24,24,27,.12);
+      color: #18181b;
+      box-shadow: 0 8px 24px rgba(24,24,27,.12);
     }
 
     [data-bust-asset-check="true"] {
       align-items: center;
-      background: rgba(24,24,27,.92);
+      background: rgba(22,101,52,.96);
       border-radius: 999px;
       color: white;
       display: flex;
-      font-size: 12px;
-      font-weight: 800;
-      height: 24px;
+      font-size: 13px;
+      font-weight: 900;
+      height: 28px;
       justify-content: center;
       opacity: 0;
       position: absolute;
-      right: 9px;
-      top: 9px;
+      left: 10px;
+      top: 10px;
       transform: scale(.9);
       transition: opacity .18s ease, transform .18s ease;
-      width: 24px;
-      z-index: 2;
+      width: 28px;
+      z-index: 3;
     }
 
     [data-bust-asset-card="true"][data-selected="true"] [data-bust-asset-check="true"] {
@@ -114,28 +147,33 @@ function injectStyles() {
     }
 
     [data-bust-asset-control-row="true"] {
-      padding: 0 10px 10px !important;
-      background: rgba(255,255,255,0.92) !important;
+      display: none !important;
     }
 
     [data-bust-asset-filter-row="true"] {
-      gap: 6px !important;
-      margin: 12px 0 14px !important;
+      display: flex !important;
+      flex-wrap: wrap !important;
+      gap: 8px !important;
+      margin: 12px 0 18px !important;
     }
 
     [data-bust-asset-filter-row="true"] button {
       border-radius: 999px !important;
       font-size: 11px !important;
       min-height: 28px !important;
-      padding: 6px 10px !important;
+      padding: 6px 11px !important;
     }
 
-    @media (max-width: 1100px) {
-      [data-bust-asset-gallery="true"] { column-count: 3; }
+    @media (max-width: 1180px) {
+      [data-bust-asset-gallery="true"] {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+      }
     }
 
     @media (max-width: 760px) {
-      [data-bust-asset-gallery="true"] { column-count: 2; }
+      [data-bust-asset-gallery="true"] {
+        grid-template-columns: 1fr !important;
+      }
     }
   `;
 
@@ -183,7 +221,7 @@ function setImageRatio(card: HTMLElement, index: number) {
 
   imageBox.dataset.bustAssetImageBox = "true";
 
-  const presetHeights = [172, 132, 205, 150, 188, 140, 216, 160];
+  const presetHeights = [280, 240, 320, 260, 300, 250, 340, 270];
   const applyNaturalRatio = () => {
     if (!(image instanceof HTMLImageElement) || !image.naturalWidth || !image.naturalHeight) {
       imageBox.style.height = `${presetHeights[index % presetHeights.length]}px`;
@@ -191,7 +229,7 @@ function setImageRatio(card: HTMLElement, index: number) {
     }
 
     const ratio = image.naturalWidth / image.naturalHeight;
-    const height = ratio > 1.35 ? 124 : ratio < 0.78 ? 214 : 168;
+    const height = ratio > 1.45 ? 240 : ratio < 0.76 ? 340 : 290;
     imageBox.style.height = `${height}px`;
   };
 
@@ -221,7 +259,7 @@ function styleCaption(card: HTMLElement) {
 
     const title = info.querySelector("p");
     if (title instanceof HTMLElement) {
-      title.style.fontSize = "12px";
+      title.style.fontSize = "13px";
       title.style.fontWeight = "650";
       title.style.lineHeight = "1.25";
       title.style.letterSpacing = "-0.01em";
@@ -241,15 +279,27 @@ function styleCaption(card: HTMLElement) {
   }
 }
 
-function addSelectionCheck(card: HTMLElement) {
+function updateSelectionState(card: HTMLElement) {
   const text = normalize(card.textContent || "");
-  card.dataset.selected = text.includes("omitir") ? "true" : "false";
+  const selected = text.includes("omitir");
+  card.dataset.selected = selected ? "true" : "false";
 
-  if (card.querySelector("[data-bust-asset-check]")) return;
-  const check = document.createElement("span");
-  check.dataset.bustAssetCheck = "true";
-  check.textContent = "✓";
-  card.appendChild(check);
+  let check = card.querySelector("[data-bust-asset-check]");
+  if (!(check instanceof HTMLElement)) {
+    check = document.createElement("span");
+    check.dataset.bustAssetCheck = "true";
+    check.textContent = "✓";
+    card.appendChild(check);
+  }
+
+  let status = card.querySelector("[data-bust-asset-status]");
+  if (!(status instanceof HTMLElement)) {
+    status = document.createElement("span");
+    status.dataset.bustAssetStatus = "true";
+    card.appendChild(status);
+  }
+
+  status.textContent = selected ? "Seleccionado ✓" : "Agregar al brief";
 }
 
 function enhanceCards(section: HTMLElement) {
@@ -272,7 +322,7 @@ function enhanceCards(section: HTMLElement) {
     card.dataset.bustAssetCard = "true";
     setImageRatio(card, index);
     styleCaption(card);
-    addSelectionCheck(card);
+    updateSelectionState(card);
   });
 }
 
