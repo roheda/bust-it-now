@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import AssetGalleryFilterController from "./components/AssetGalleryFilterController";
 import EnhanceBriefAssets from "./components/EnhanceBriefAssets";
 import FeedbackWidget from "./components/FeedbackWidget";
 import GeneratedAssetSaverWidget from "./components/GeneratedAssetSaverWidget";
@@ -37,6 +38,7 @@ export default function RootLayout({
         {children}
         <HideBriefLogoControls />
         <EnhanceBriefAssets />
+        <AssetGalleryFilterController />
         <GeneratedAssetSaverWidget />
         <LogoOverlayEditorWidget />
         <FeedbackWidget />
