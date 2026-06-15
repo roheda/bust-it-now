@@ -266,8 +266,7 @@ function findGalleryContainer(section: HTMLElement, cards: HTMLElement[]) {
   const parent = cards[0]?.parentElement;
   if (parent instanceof HTMLElement && parent !== section) return parent;
 
-  const candidates = Array.from(section.querySelectorAll("div")).filter((candidate): candidate is HTMLElement => {
-    if (!(candidate instanceof HTMLElement)) return false;
+  const candidates = Array.from(section.querySelectorAll<HTMLElement>("div")).filter((candidate) => {
     const directCardCount = Array.from(candidate.children).filter((child) => cards.includes(child as HTMLElement)).length;
     return directCardCount >= 2;
   });
