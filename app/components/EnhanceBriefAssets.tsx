@@ -284,17 +284,17 @@ function updateSelectionState(card: HTMLElement) {
   const selected = text.includes("omitir");
   card.dataset.selected = selected ? "true" : "false";
 
-  let check = card.querySelector("[data-bust-asset-check]");
-  if (!(check instanceof HTMLElement)) {
-    check = document.createElement("span");
+  const existingCheck = card.querySelector("[data-bust-asset-check]");
+  const check = existingCheck instanceof HTMLElement ? existingCheck : document.createElement("span");
+  if (!(existingCheck instanceof HTMLElement)) {
     check.dataset.bustAssetCheck = "true";
     check.textContent = "✓";
     card.appendChild(check);
   }
 
-  let status = card.querySelector("[data-bust-asset-status]");
-  if (!(status instanceof HTMLElement)) {
-    status = document.createElement("span");
+  const existingStatus = card.querySelector("[data-bust-asset-status]");
+  const status = existingStatus instanceof HTMLElement ? existingStatus : document.createElement("span");
+  if (!(existingStatus instanceof HTMLElement)) {
     status.dataset.bustAssetStatus = "true";
     card.appendChild(status);
   }
