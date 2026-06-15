@@ -197,6 +197,7 @@ function injectStyles() {
       font-size: 11px !important;
       min-height: 28px !important;
       padding: 6px 11px !important;
+      touch-action: manipulation !important;
     }
   `;
 
@@ -261,7 +262,7 @@ function buttonClass(active: boolean) {
     : "rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50";
 }
 
-function setFilterButtonState(section: HTMLElement, activeButton: HTMLButtonElement) {
+function setFilterButtonState(activeButton: HTMLButtonElement) {
   const row = activeButton.closest("[data-bust-asset-filter-row]");
   if (!(row instanceof HTMLElement)) return;
 
@@ -291,14 +292,24 @@ function wireFilterButtons(section: HTMLElement) {
     if (wiredFilterButtons.has(button)) return;
 
     wiredFilterButtons.add(button);
+
+    button.addEventListener(
+      "pointerdown",
+      (event) => {
+        event.stopPropagation();
+      },
+      true,
+    );
+
     button.addEventListener(
       "click",
       (event) => {
         event.preventDefault();
+        event.stopPropagation();
         event.stopImmediatePropagation();
 
         const filter = filterFromButton(button);
-        setFilterButtonState(section, button);
+        setFilterButtonState(button);
         applyAssetFilter(section, filter);
       },
       true,
